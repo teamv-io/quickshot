@@ -25,6 +25,7 @@ export default function Overlay(): JSX.Element {
   const [source, setSource] = useState<OverlaySource | null>(null)
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [rect, setRect] = useState<Rect | null>(null)
+  const [mic, setMic] = useState(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
 
   useEffect(() => window.api.onOverlaySource(setSource), [])
@@ -37,8 +38,24 @@ export default function Overlay(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  function crop(sel: Rect): void {
+  function finish(sel: Rect): void {
     if (!source) return
+
+    // Recording: hand back the region as fractions of the display (resolution-independent).
+    if (source.purpose === 'record') {
+      window.api.completeRegion(
+        {
+          fx: sel.x / window.innerWidth,
+          fy: sel.y / window.innerHeight,
+          fw: sel.w / window.innerWidth,
+          fh: sel.h / window.innerHeight
+        },
+        mic
+      )
+      return
+    }
+
+    // Screenshot: crop the frozen image at native resolution.
     const img = imgRef.current
     if (!img) return
     const s = source.scaleFactor
@@ -46,18 +63,8 @@ export default function Overlay(): JSX.Element {
     canvas.width = Math.max(1, Math.round(sel.w * s))
     canvas.height = Math.max(1, Math.round(sel.h * s))
     const ctx = canvas.getContext('2d')!
-    ctx.drawImage(
-      img,
-      sel.x * s,
-      sel.y * s,
-      sel.w * s,
-      sel.h * s,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    )
-    window.api.completeCapture(canvas.toDataURL('image/png'))
+    ctx.drawImage(img, sel.x * s, sel.y * s, sel.w * s, sel.h * s, 0, 0, canvas.width, canvas.height)
+    window.api.completeScreenshot(canvas.toDataURL('image/png'))
   }
 
   function onMouseDown(e: React.MouseEvent): void {
@@ -69,9 +76,15 @@ export default function Overlay(): JSX.Element {
     setRect(normalize(origin, { x: e.clientX, y: e.clientY }))
   }
   function onMouseUp(): void {
-    if (rect && rect.w > 3 && rect.h > 3) crop(rect)
+    if (rect && rect.w > 3 && rect.h > 3) finish(rect)
     else window.api.cancelCapture()
     setOrigin(null)
+  }
+
+  function fullScreen(): void {
+    if (!source) return
+    if (source.purpose === 'record') window.api.completeRegion(null, mic)
+    else window.api.completeScreenshot(source.dataUrl)
   }
 
   if (!source) return <div className="h-full w-full bg-black" />
@@ -110,10 +123,46 @@ export default function Overlay(): JSX.Element {
         </div>
       )}
       {!rect && (
-        <div className="pointer-events-none absolute inset-x-0 top-6 text-center text-sm text-white/80">
-          Drag to select a region · Esc to cancel
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="rounded-full bg-black/70 px-4 py-2 text-sm text-white/90 shadow-lg ring-1 ring-white/10">
+            {source.purpose === 'record' ? 'Drag to select area to record' : 'Drag to select a region'}
+            {'  ·  Esc to cancel'}
+          </div>
         </div>
       )}
+
+      {/* Action bar — clickable, so stop drag from starting underneath it. */}
+      <div
+        className="absolute inset-x-0 bottom-10 flex justify-center"
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 rounded-full bg-zinc-900/90 px-2 py-2 shadow-xl ring-1 ring-white/10">
+          {source.purpose === 'record' && (
+            <button
+              onClick={() => setMic((m) => !m)}
+              title={mic ? 'Microphone on' : 'Microphone off'}
+              className={`rounded-full px-3 py-1.5 text-sm ${
+                mic ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
+              }`}
+            >
+              {mic ? '🎤 Mic on' : '🎙 Mic off'}
+            </button>
+          )}
+          <button
+            onClick={fullScreen}
+            className="rounded-full bg-sky-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-sky-400"
+          >
+            {source.purpose === 'record' ? '⏺ Record full screen' : '⛶ Capture full screen'}
+          </button>
+          <button
+            onClick={() => window.api.cancelCapture()}
+            className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-zinc-200 hover:bg-white/20"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

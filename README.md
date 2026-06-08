@@ -6,12 +6,26 @@ Open-source screenshot, annotation, and (soon) screen recording — a free alter
 
 ## Features (current)
 
-- 🎯 **Region capture** via global hotkey (`⌘/Ctrl + Shift + 2`) — freezes the screen, drag to select.
+- 🎯 **Screenshot — full screen or selected area**
+  - `⌘/Ctrl + Shift + 1` → full screen · `⌘/Ctrl + Shift + 2` → drag-select region
+- 🎥 **Screen recording — full screen or selected area** (`⌘/Ctrl + Shift + R`)
+  - Optional microphone, pause/resume, live timer, floating control bar (kept out of the recording)
+  - Region recording crops the stream via a canvas pipeline → WebM (VP9 + Opus)
 - 🖍️ **Annotate** — arrow, rectangle, ellipse, freehand pen, text.
 - 🌫️ **Blur / redact** — pixelate sensitive areas at full resolution.
 - ↩️ **Undo / redo**, delete, color palette + custom color, adjustable stroke size.
 - 📋 **Copy to clipboard** or **Save PNG** (full native resolution, Retina-aware).
 - 🧭 Lives in the **menu bar** (no Dock clutter).
+
+### Shortcuts
+
+| Action | Shortcut |
+|---|---|
+| Capture selected area | `⌘/Ctrl + Shift + 2` |
+| Capture full screen | `⌘/Ctrl + Shift + 1` |
+| Start / stop recording | `⌘/Ctrl + Shift + R` |
+
+(Recording full vs. selected area, and with/without mic, are chosen from the menu-bar menu.)
 
 ## Tech stack
 
@@ -41,7 +55,8 @@ npm run build:mac   # or build:win / build:linux
 
 ## Roadmap
 
-- [ ] Screen recording (MP4 / GIF) with mic + system audio, webcam overlay
+- [x] Screen recording (WebM) with mic, full-screen or selected-area
+- [ ] MP4 / GIF export (ffmpeg), system audio (loopback), webcam overlay
 - [ ] Scrolling / full-page capture
 - [ ] Numbered step badges, spotlight/dim focus, drop-shadow "pretty" export
 - [ ] Pluggable uploaders (S3 / Imgur / custom) → instant share links
