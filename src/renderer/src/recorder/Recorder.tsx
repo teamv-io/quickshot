@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, Pause, Play, Square, TriangleAlert } from 'lucide-react'
-import type { RegionFraction } from '../../../preload'
+import { Mic, Volume2, Video, Pause, Play, Square, TriangleAlert } from 'lucide-react'
+import type { RegionFraction, RecordOptions } from '../../../preload'
 
 type Phase = 'starting' | 'recording' | 'paused' | 'saving' | 'error'
+type Config = RecordOptions & { region: RegionFraction | null }
 
 function fmt(total: number): string {
   const m = Math.floor(total / 60)
@@ -12,26 +13,24 @@ function fmt(total: number): string {
 
 /**
  * Floating control bar that records the active display via getDisplayMedia +
- * MediaRecorder (WebM). Lives in a content-protected window so it doesn't
- * appear in the recording itself.
+ * MediaRecorder (WebM). Optionally crops to a region, overlays a webcam circle,
+ * and mixes microphone + system audio. Content-protected so it stays out of the
+ * recording.
  */
 export default function Recorder(): JSX.Element {
   const [phase, setPhase] = useState<Phase>('starting')
   const [seconds, setSeconds] = useState(0)
-  const [hasMic, setHasMic] = useState(false)
+  const [active, setActive] = useState({ mic: false, systemAudio: false, webcam: false })
   const [error, setError] = useState<string | null>(null)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamsRef = useRef<MediaStream[]>([])
+  const elsRef = useRef<HTMLVideoElement[]>([])
+  const audioCtxRef = useRef<AudioContext | null>(null)
   const timerRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
   const secondsRef = useRef(0)
-
-  // Keep latest phase available to async callbacks.
-  const phaseRef = useRef<Phase>('starting')
-  phaseRef.current = phase
 
   function tickStart(): void {
     if (timerRef.current != null) return
@@ -47,65 +46,121 @@ export default function Recorder(): JSX.Element {
     }
   }
 
-  /** Crop a full-display stream down to the selected region via an offscreen canvas. */
-  async function cropToRegion(
-    display: MediaStream,
-    region: RegionFraction
-  ): Promise<MediaStream> {
-    const video = document.createElement('video')
-    video.srcObject = display
-    video.muted = true
-    await video.play()
-    if (!video.videoWidth) {
-      await new Promise<void>((res) => {
-        video.onloadedmetadata = () => res()
-      })
-    }
-    videoRef.current = video
+  async function videoEl(stream: MediaStream): Promise<HTMLVideoElement> {
+    const el = document.createElement('video')
+    el.srcObject = stream
+    el.muted = true
+    el.playsInline = true
+    await el.play().catch(() => {})
+    if (!el.videoWidth) await new Promise<void>((r) => (el.onloadedmetadata = () => r()))
+    elsRef.current.push(el)
+    return el
+  }
 
-    const vw = video.videoWidth
-    const vh = video.videoHeight
-    const sx = Math.round(region.fx * vw)
-    const sy = Math.round(region.fy * vh)
-    const sw = Math.max(2, Math.round(region.fw * vw))
-    const sh = Math.max(2, Math.round(region.fh * vh))
+  /** Build the recorded video track: crop to region and/or overlay a webcam circle. */
+  async function buildVideoStream(
+    display: MediaStream,
+    region: RegionFraction | null,
+    cam: HTMLVideoElement | null
+  ): Promise<MediaStream> {
+    if (!region && !cam) return display // raw full-screen, no compositing needed
+    const disp = await videoEl(display)
+    const vw = disp.videoWidth
+    const vh = disp.videoHeight
+    const sx = region ? Math.round(region.fx * vw) : 0
+    const sy = region ? Math.round(region.fy * vh) : 0
+    const sw = region ? Math.max(2, Math.round(region.fw * vw)) : vw
+    const sh = region ? Math.max(2, Math.round(region.fh * vh)) : vh
 
     const canvas = document.createElement('canvas')
     canvas.width = sw
     canvas.height = sh
     const ctx = canvas.getContext('2d')!
+
     const draw = (): void => {
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh)
+      ctx.drawImage(disp, sx, sy, sw, sh, 0, 0, sw, sh)
+      if (cam && cam.videoWidth) {
+        const d = Math.round(Math.min(sw, sh) * 0.24)
+        const m = Math.round(d * 0.2)
+        const cx = m + d / 2
+        const cy = sh - m - d / 2
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(cx, cy, d / 2, 0, Math.PI * 2)
+        ctx.clip()
+        const scale = Math.max(d / cam.videoWidth, d / cam.videoHeight)
+        const dw = cam.videoWidth * scale
+        const dh = cam.videoHeight * scale
+        ctx.drawImage(cam, cx - dw / 2, cy - dh / 2, dw, dh)
+        ctx.restore()
+        ctx.beginPath()
+        ctx.arc(cx, cy, d / 2, 0, Math.PI * 2)
+        ctx.lineWidth = Math.max(2, d * 0.03)
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+        ctx.stroke()
+      }
       rafRef.current = requestAnimationFrame(draw)
     }
     draw()
     return canvas.captureStream(30)
   }
 
-  async function start(mic: boolean, region: RegionFraction | null): Promise<void> {
+  /** Mix multiple audio tracks into one via Web Audio (used when both sources are on). */
+  function mixAudio(tracks: MediaStreamTrack[]): MediaStreamTrack[] {
+    if (tracks.length <= 1) return tracks
+    const ctx = new AudioContext()
+    audioCtxRef.current = ctx
+    const dest = ctx.createMediaStreamDestination()
+    for (const t of tracks) ctx.createMediaStreamSource(new MediaStream([t])).connect(dest)
+    return dest.stream.getAudioTracks()
+  }
+
+  async function start(cfg: Config): Promise<void> {
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      const display = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: cfg.systemAudio
+      })
       streamsRef.current.push(display)
 
-      const source = region ? await cropToRegion(display, region) : display
-      const tracks: MediaStreamTrack[] = [...source.getVideoTracks()]
+      let cam: HTMLVideoElement | null = null
+      let hasWebcam = false
+      if (cfg.webcam) {
+        try {
+          const camStream = await navigator.mediaDevices.getUserMedia({ video: true })
+          streamsRef.current.push(camStream)
+          cam = await videoEl(camStream)
+          hasWebcam = true
+        } catch {
+          /* no webcam available */
+        }
+      }
 
-      if (mic) {
+      const videoStream = await buildVideoStream(display, cfg.region, cam)
+      const videoTrack = videoStream.getVideoTracks()[0]
+
+      // Audio: system (from the display stream) + mic.
+      const sysTracks = cfg.systemAudio ? display.getAudioTracks() : []
+      let micTracks: MediaStreamTrack[] = []
+      let hasMic = false
+      if (cfg.mic) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
           streamsRef.current.push(micStream)
-          tracks.push(...micStream.getAudioTracks())
-          setHasMic(true)
+          micTracks = micStream.getAudioTracks()
+          hasMic = true
         } catch {
-          // Mic denied — continue video-only.
-          setHasMic(false)
+          /* mic denied */
         }
       }
+      const audioTracks = mixAudio([...sysTracks, ...micTracks])
+
+      setActive({ mic: hasMic, systemAudio: sysTracks.length > 0, webcam: hasWebcam })
 
       // Stop if the user ends sharing via the OS.
       display.getVideoTracks()[0].addEventListener('ended', () => stop())
 
-      const combined = new MediaStream(tracks)
+      const combined = new MediaStream([videoTrack, ...audioTracks])
       const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
         ? 'video/webm;codecs=vp9,opus'
         : 'video/webm'
@@ -131,11 +186,11 @@ export default function Recorder(): JSX.Element {
     tickStop()
     setPhase('saving')
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-    videoRef.current?.pause()
+    elsRef.current.forEach((el) => el.pause())
+    audioCtxRef.current?.close().catch(() => {})
     const blob = new Blob(chunksRef.current, { type: 'video/webm' })
     const buf = await blob.arrayBuffer()
     streamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()))
-    // Hand off to the library + Studio; main closes this bar.
     await window.api.recordingReady(buf, secondsRef.current)
   }
 
@@ -160,7 +215,7 @@ export default function Recorder(): JSX.Element {
   }
 
   useEffect(() => {
-    const offConfig = window.api.onRecorderConfig((cfg) => start(cfg.mic, cfg.region))
+    const offConfig = window.api.onRecorderConfig((cfg) => start(cfg))
     const offStop = window.api.onRecorderStop(() => stop())
     return () => {
       offConfig()
@@ -195,7 +250,11 @@ export default function Recorder(): JSX.Element {
               className={`h-3 w-3 rounded-full bg-red-500 ${recording ? 'animate-pulse' : 'opacity-50'}`}
             />
             <span className="w-14 text-center font-mono text-sm tabular-nums">{fmt(seconds)}</span>
-            {hasMic && <Mic size={16} className="text-zinc-300" />}
+            <span className="flex items-center gap-1.5 text-zinc-400">
+              {active.mic && <Mic size={15} className="text-sky-400" />}
+              {active.systemAudio && <Volume2 size={15} className="text-sky-400" />}
+              {active.webcam && <Video size={15} className="text-sky-400" />}
+            </span>
 
             <button
               onClick={togglePause}
@@ -203,7 +262,11 @@ export default function Recorder(): JSX.Element {
               title={phase === 'paused' ? 'Resume' : 'Pause'}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-40"
             >
-              {phase === 'paused' ? <Play size={15} fill="currentColor" /> : <Pause size={15} fill="currentColor" />}
+              {phase === 'paused' ? (
+                <Play size={15} fill="currentColor" />
+              ) : (
+                <Pause size={15} fill="currentColor" />
+              )}
             </button>
             <button
               onClick={stop}

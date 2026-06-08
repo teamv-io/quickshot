@@ -49,6 +49,11 @@ interface RegionFraction {
   fw: number
   fh: number
 }
+interface RecordOptions {
+  mic: boolean
+  systemAudio: boolean
+  webcam: boolean
+}
 
 let tray: Tray | null = null
 let overlayWindow: BrowserWindow | null = null
@@ -65,9 +70,10 @@ let currentStudioItem: string | null = null
 /** Display the region overlay lives on (used to target recordings). */
 let overlayDisplayId: number | null = null
 
-/** Target display/region for the next recording. */
+/** Target display/region/options for the next recording. */
 let recordDisplayId: number | null = null
 let recordRegion: RegionFraction | null = null
+let recordOptions: RecordOptions = { mic: false, systemAudio: false, webcam: false }
 
 const preload = join(__dirname, '../preload/index.js')
 
@@ -184,7 +190,7 @@ async function captureFullScreen(): Promise<void> {
   }
 }
 
-function openRecorderBar(withMic: boolean): void {
+function openRecorderBar(): void {
   if (recorderWindow) {
     recorderWindow.focus()
     return
@@ -221,7 +227,7 @@ function openRecorderBar(withMic: boolean): void {
   loadRoute(recorderWindow, 'recorder')
 
   recorderWindow.webContents.once('did-finish-load', () => {
-    recorderWindow?.webContents.send('recorder:config', { mic: withMic, region: recordRegion })
+    recorderWindow?.webContents.send('recorder:config', { ...recordOptions, region: recordRegion })
   })
   recorderWindow.on('closed', () => {
     recorderWindow = null
@@ -464,12 +470,13 @@ function registerIpc(): void {
     openStudio(item.id)
   })
 
-  // Recording overlay returned a region (fractions) or null for full screen, plus mic choice.
-  ipcMain.handle('overlay:region', (_e, region: RegionFraction | null, mic: boolean) => {
+  // Recording overlay returned a region (or null = full screen) + capture options.
+  ipcMain.handle('overlay:region', (_e, region: RegionFraction | null, opts: RecordOptions) => {
     recordRegion = region
     recordDisplayId = overlayDisplayId
+    recordOptions = opts
     overlayWindow?.close()
-    openRecorderBar(mic)
+    openRecorderBar()
   })
 
   ipcMain.on('overlay:cancel', () => {
@@ -675,7 +682,8 @@ app.whenReady().then(() => {
         const targetId =
           recordDisplayId ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
         const source = sources.find((s) => s.display_id === String(targetId)) ?? sources[0]
-        callback({ video: source })
+        // 'loopback' captures system audio where supported (Windows; macOS 13+).
+        callback(recordOptions.systemAudio ? { video: source, audio: 'loopback' } : { video: source })
       })
     },
     { useSystemPicker: false }

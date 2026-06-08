@@ -17,6 +17,12 @@ export interface RegionFraction {
   fh: number
 }
 
+export interface RecordOptions {
+  mic: boolean
+  systemAudio: boolean
+  webcam: boolean
+}
+
 export type ItemType = 'image' | 'video'
 export interface LibraryItem {
   id: string
@@ -46,17 +52,17 @@ const api = {
   },
   completeScreenshot: (croppedDataUrl: string): Promise<void> =>
     ipcRenderer.invoke('overlay:screenshot', croppedDataUrl),
-  completeRegion: (region: RegionFraction | null, mic: boolean): Promise<void> =>
-    ipcRenderer.invoke('overlay:region', region, mic),
+  completeRegion: (region: RegionFraction | null, opts: RecordOptions): Promise<void> =>
+    ipcRenderer.invoke('overlay:region', region, opts),
   cancelCapture: (): void => ipcRenderer.send('overlay:cancel'),
 
   // ── Recorder control bar ─────────────────────────────────────────
   onRecorderConfig(
-    cb: (cfg: { mic: boolean; region: RegionFraction | null }) => void
+    cb: (cfg: RecordOptions & { region: RegionFraction | null }) => void
   ): () => void {
     const handler = (
       _e: IpcRendererEvent,
-      cfg: { mic: boolean; region: RegionFraction | null }
+      cfg: RecordOptions & { region: RegionFraction | null }
     ): void => cb(cfg)
     ipcRenderer.on('recorder:config', handler)
     return () => ipcRenderer.removeListener('recorder:config', handler)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Monitor, Circle, Mic, MicOff } from 'lucide-react'
+import { Monitor, Circle, Mic, MicOff, Volume2, VolumeX, Video, VideoOff } from 'lucide-react'
 import type { OverlaySource } from '../../../preload'
 
 interface Rect {
@@ -27,6 +27,8 @@ export default function Overlay(): JSX.Element {
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [rect, setRect] = useState<Rect | null>(null)
   const [mic, setMic] = useState(false)
+  const [systemAudio, setSystemAudio] = useState(false)
+  const [webcam, setWebcam] = useState(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
 
   useEffect(() => window.api.onOverlaySource(setSource), [])
@@ -51,7 +53,7 @@ export default function Overlay(): JSX.Element {
           fw: sel.w / window.innerWidth,
           fh: sel.h / window.innerHeight
         },
-        mic
+        { mic, systemAudio, webcam }
       )
       return
     }
@@ -84,7 +86,7 @@ export default function Overlay(): JSX.Element {
 
   function fullScreen(): void {
     if (!source) return
-    if (source.purpose === 'record') window.api.completeRegion(null, mic)
+    if (source.purpose === 'record') window.api.completeRegion(null, { mic, systemAudio, webcam })
     else window.api.completeScreenshot(source.dataUrl)
   }
 
@@ -140,16 +142,39 @@ export default function Overlay(): JSX.Element {
       >
         <div className="flex items-center gap-2 rounded-full bg-zinc-900/90 px-2 py-2 shadow-xl ring-1 ring-white/10">
           {source.purpose === 'record' && (
-            <button
-              onClick={() => setMic((m) => !m)}
-              title={mic ? 'Microphone on' : 'Microphone off'}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${
-                mic ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
-              }`}
-            >
-              {mic ? <Mic size={15} /> : <MicOff size={15} />}
-              {mic ? 'Mic on' : 'Mic off'}
-            </button>
+            <>
+              <button
+                onClick={() => setMic((m) => !m)}
+                title="Microphone"
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${
+                  mic ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
+                }`}
+              >
+                {mic ? <Mic size={15} /> : <MicOff size={15} />}
+                Mic
+              </button>
+              <button
+                onClick={() => setSystemAudio((s) => !s)}
+                title="System audio"
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${
+                  systemAudio ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
+                }`}
+              >
+                {systemAudio ? <Volume2 size={15} /> : <VolumeX size={15} />}
+                Audio
+              </button>
+              <button
+                onClick={() => setWebcam((w) => !w)}
+                title="Webcam overlay"
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${
+                  webcam ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
+                }`}
+              >
+                {webcam ? <Video size={15} /> : <VideoOff size={15} />}
+                Cam
+              </button>
+              <div className="mx-1 h-5 w-px bg-white/15" />
+            </>
           )}
           <button
             onClick={fullScreen}
