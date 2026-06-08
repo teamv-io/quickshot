@@ -95,7 +95,7 @@ function openStudio(itemId: string | null): void {
     height: 840,
     minWidth: 820,
     minHeight: 560,
-    title: 'QuickShot',
+    title: 'QuickShot by TeamV',
     backgroundColor: '#1e1e22',
     show: false,
     webPreferences: { preload, sandbox: false }
@@ -366,7 +366,7 @@ function openSettings(): void {
     width: 540,
     height: 600,
     resizable: false,
-    title: 'QuickShot — Settings',
+    title: 'QuickShot by TeamV — Settings',
     backgroundColor: '#1e1e22',
     show: false,
     webPreferences: { preload, sandbox: false }
@@ -387,7 +387,7 @@ function buildTray(): void {
     .resize({ width: 18, height: 18 })
   icon.setTemplateImage(true)
   tray = new Tray(icon)
-  tray.setToolTip('QuickShot')
+  tray.setToolTip('QuickShot by TeamV')
   refreshTray()
 }
 

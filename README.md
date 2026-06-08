@@ -1,8 +1,14 @@
-# QuickShot
+# QuickShot by TeamV
 
-Open-source screenshot, annotation, and (soon) screen recording — a free alternative to ShareX / CleanShot / Flameshot. Built with Electron so one codebase ships to **macOS today, Windows & Linux next**.
+Open-source screenshot, annotation, and screen recording — a free alternative to ShareX / CleanShot / Flameshot. Built with Electron so one codebase ships to **macOS, Windows, and Linux**.
 
-> Status: early MVP. Region capture → annotate → copy/save works. Recording is on the roadmap.
+> Status: active development. Screenshots, annotation, recording, and a Snagit-style library all work.
+
+## Install
+
+Grab the latest **macOS `.dmg`** or **Windows installer** from the [Releases](https://github.com/teamv-io/quickshot/releases) page. Builds are produced automatically by CI on each tagged release.
+
+> Builds are currently **unsigned**, so on first launch macOS may warn — right-click the app → Open. (Code signing / notarization is on the roadmap.)
 
 ## Features (current)
 
@@ -47,23 +53,40 @@ npm run dev
 
 On macOS, grant **Screen Recording** permission the first time (System Settings ▸ Privacy & Security ▸ Screen Recording), then relaunch. Press `⌘ + Shift + 2` to capture.
 
-## Build
+## Quality
 
 ```bash
-npm run build:mac   # or build:win / build:linux
+npm run typecheck   # strict TypeScript
+npm test            # vitest unit tests (pure logic in src/shared)
+npm run lint        # eslint
+npm run format      # prettier
+```
+
+## Build & release
+
+```bash
+npm run build:mac   # or build:win / build:linux  → installers in release/
+```
+
+Releases are automated: **push a `v*` tag** and GitHub Actions builds the macOS `.dmg` and Windows installer and attaches them to a GitHub Release.
+
+```bash
+npm version patch   # bumps version + creates a tag
+git push --follow-tags
 ```
 
 ## Roadmap
 
+- [x] Screenshots (full / region) + annotation (arrow, shapes, text, pen, blur, crop)
 - [x] Screen recording (WebM) with mic, full-screen or selected-area
-- [ ] MP4 / GIF export (ffmpeg), system audio (loopback), webcam overlay
-- [ ] Scrolling / full-page capture
-- [ ] Numbered step badges, spotlight/dim focus, drop-shadow "pretty" export
+- [x] Snagit-style library (SQLite) with filmstrip, search, rename, drag-out
+- [x] Floating launcher bar + settings (opacity, position, custom shortcuts)
+- [ ] MP4 / GIF export (ffmpeg) + video trim
+- [ ] System audio (loopback), webcam overlay, show-clicks
+- [ ] "Pretty" export (padding / background / shadow), numbered step badges
 - [ ] Pluggable uploaders (S3 / Imgur / custom) → instant share links
-- [ ] OCR text extraction
-- [ ] Capture history / gallery
-- [ ] Windows & Linux capture backends
+- [ ] Code signing + notarization, auto-update
 
 ## License
 
-MIT © byteamv
+MIT © TeamV

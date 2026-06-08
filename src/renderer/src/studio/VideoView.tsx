@@ -51,7 +51,8 @@ export default function VideoView({ item }: { item: LibraryItem }): JSX.Element 
     if (!ctx) return
     ctx.drawImage(video, 0, 0, c.width, c.height)
     try {
-      window.api.librarySetThumb(item.id, c.toDataURL('image/jpeg', 0.6))
+      // WebP preview — smaller than PNG/JPEG at similar quality.
+      window.api.librarySetThumb(item.id, c.toDataURL('image/webp', 0.85))
     } catch {
       // tainted/unsupported — skip poster
     }

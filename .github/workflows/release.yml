@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: '--mac'
+          - os: windows-latest
+            target: '--win'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Bundle main/preload/renderer (electron-vite), then package + publish.
+      - run: npm run build
+
+      - name: Package & publish (${{ matrix.target }})
+        run: npx electron-builder ${{ matrix.target }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Unsigned builds — skip macOS identity auto-discovery.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

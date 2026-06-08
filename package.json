@@ -1,8 +1,8 @@
 {
   "name": "quickshot",
   "version": "0.1.0",
-  "description": "QuickShot — open-source screenshot, annotation, and (soon) screen recording. Native-feel cross-platform desktop app.",
-  "author": "byteamv",
+  "description": "QuickShot by TeamV — open-source screenshot, annotation, and screen recording for macOS, Windows, and Linux.",
+  "author": "TeamV",
   "license": "MIT",
   "main": "./out/main/index.js",
   "scripts": {
@@ -18,6 +18,43 @@
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:win": "electron-vite build && electron-builder --win",
     "build:linux": "electron-vite build && electron-builder --linux"
+  },
+  "build": {
+    "appId": "io.teamv.quickshot",
+    "productName": "QuickShot by TeamV",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": ["out/**/*", "package.json"],
+    "asarUnpack": ["**/node_modules/better-sqlite3/**"],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.productivity",
+      "artifactName": "QuickShot-by-TeamV-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "QuickShot by TeamV ${version}"
+    },
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "QuickShot-by-TeamV-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Utility",
+      "artifactName": "QuickShot-by-TeamV-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "teamv-io",
+      "repo": "quickshot"
+    }
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
