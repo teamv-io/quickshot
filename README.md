@@ -81,9 +81,9 @@ git push --follow-tags
 - [x] Screen recording (WebM) with mic, full-screen or selected-area
 - [x] Snagit-style library (SQLite) with filmstrip, search, rename, drag-out
 - [x] Floating launcher bar + settings (opacity, position, custom shortcuts)
-- [ ] MP4 / GIF export (ffmpeg) + video trim
+- [x] MP4 / GIF export (ffmpeg) + video trim
+- [x] "Pretty" export (padding / background / shadow), numbered step badges, highlighter
 - [ ] System audio (loopback), webcam overlay, show-clicks
-- [ ] "Pretty" export (padding / background / shadow), numbered step badges
 - [ ] Pluggable uploaders (S3 / Imgur / custom) → instant share links
 - [ ] Code signing + notarization, auto-update
 

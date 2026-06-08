@@ -5,6 +5,8 @@ import {
   Circle,
   MoveUpRight,
   Pencil,
+  Highlighter,
+  ListOrdered,
   Type,
   EyeOff,
   Crop,
@@ -14,10 +16,12 @@ import {
   Copy as CopyIcon,
   Save as SaveIcon,
   Download,
+  Sparkles,
   type LucideIcon
 } from 'lucide-react'
 import type { LibraryItem } from '../../../preload'
 import { FabricEditor, type Tool } from '../editor/FabricEditor'
+import { composePretty, DEFAULT_PRETTY, BACKGROUNDS, type PrettyOptions } from './pretty'
 
 const TOOLS: { id: Tool; label: string; Icon: LucideIcon }[] = [
   { id: 'select', label: 'Select / Move', Icon: MousePointer2 },
@@ -26,6 +30,8 @@ const TOOLS: { id: Tool; label: string; Icon: LucideIcon }[] = [
   { id: 'ellipse', label: 'Ellipse', Icon: Circle },
   { id: 'arrow', label: 'Arrow', Icon: MoveUpRight },
   { id: 'pen', label: 'Pen', Icon: Pencil },
+  { id: 'highlight', label: 'Highlighter', Icon: Highlighter },
+  { id: 'step', label: 'Step number', Icon: ListOrdered },
   { id: 'text', label: 'Text', Icon: Type },
   { id: 'blur', label: 'Blur / Redact', Icon: EyeOff }
 ]
@@ -41,6 +47,8 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
   const [width, setWidth] = useState(4)
   const [, force] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
+  const [pretty, setPretty] = useState(false)
+  const [prettyOpts, setPrettyOpts] = useState<PrettyOptions>(DEFAULT_PRETTY)
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -100,6 +108,13 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
     window.setTimeout(() => setToast(null), 1600)
   }
 
+  // Pretty styling is a presentation transform applied to copy/export only —
+  // the library keeps the clean annotated source.
+  async function rendered(): Promise<string> {
+    const png = editorRef.current!.exportPng()
+    return pretty ? composePretty(png, prettyOpts) : png
+  }
+
   async function saveToLibrary(): Promise<void> {
     const ed = editorRef.current
     if (!ed) return
@@ -107,15 +122,13 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
     flash('Saved to library')
   }
   async function copy(): Promise<void> {
-    const ed = editorRef.current
-    if (!ed) return
-    await window.api.libraryCopyImage(ed.exportPng())
+    if (!editorRef.current) return
+    await window.api.libraryCopyImage(await rendered())
     flash('Copied to clipboard')
   }
   async function exportFile(): Promise<void> {
-    const ed = editorRef.current
-    if (!ed) return
-    const res = await window.api.libraryExport(item.id, ed.exportPng())
+    if (!editorRef.current) return
+    const res = await window.api.libraryExport(item.id, await rendered())
     if (res.saved) flash('Exported')
   }
 
@@ -187,6 +200,13 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
         </button>
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            className={`${txtBtn} ${pretty ? 'bg-sky-500 text-white hover:bg-sky-400' : ''}`}
+            onClick={() => setPretty((p) => !p)}
+            title="Pretty export — padding, background, shadow"
+          >
+            <Sparkles size={15} /> Pretty
+          </button>
           <button className={txtBtn} onClick={copy}>
             <CopyIcon size={15} /> Copy
           </button>
@@ -201,6 +221,59 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
           </button>
         </div>
       </div>
+
+      {pretty && (
+        <div className="flex flex-wrap items-center gap-4 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-400">
+          <div className="flex items-center gap-1.5">
+            <span>Background</span>
+            {BACKGROUNDS.map((b) => (
+              <button
+                key={b.id}
+                title={b.label}
+                onClick={() => setPrettyOpts((o) => ({ ...o, background: b.id }))}
+                className={`h-6 w-6 rounded-md border ${
+                  prettyOpts.background === b.id ? 'border-sky-400 ring-1 ring-sky-400' : 'border-white/20'
+                }`}
+                style={{ background: b.swatch }}
+              />
+            ))}
+          </div>
+          <label className="flex items-center gap-2">
+            Padding
+            <input
+              type="range"
+              min={0}
+              max={160}
+              value={prettyOpts.padding}
+              onChange={(e) => setPrettyOpts((o) => ({ ...o, padding: Number(e.target.value) }))}
+              className="w-28 accent-sky-500"
+            />
+            <span className="w-7 tabular-nums">{prettyOpts.padding}</span>
+          </label>
+          <label className="flex items-center gap-2">
+            Radius
+            <input
+              type="range"
+              min={0}
+              max={48}
+              value={prettyOpts.radius}
+              onChange={(e) => setPrettyOpts((o) => ({ ...o, radius: Number(e.target.value) }))}
+              className="w-24 accent-sky-500"
+            />
+            <span className="w-7 tabular-nums">{prettyOpts.radius}</span>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={prettyOpts.shadow}
+              onChange={(e) => setPrettyOpts((o) => ({ ...o, shadow: e.target.checked }))}
+              className="accent-sky-500"
+            />
+            Shadow
+          </label>
+          <span className="text-zinc-600">Applies to Copy &amp; Export</span>
+        </div>
+      )}
 
       <div className="relative flex flex-1 items-center justify-center overflow-auto p-6">
         <canvas ref={canvasRef} className="rounded-lg shadow-2xl shadow-black/50" />

@@ -1,6 +1,22 @@
 import * as fabric from 'fabric'
 
-export type Tool = 'select' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'pen' | 'blur' | 'crop'
+export type Tool =
+  | 'select'
+  | 'rect'
+  | 'ellipse'
+  | 'arrow'
+  | 'text'
+  | 'pen'
+  | 'highlight'
+  | 'step'
+  | 'blur'
+  | 'crop'
+
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  if (!m) return hex
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`
+}
 
 /**
  * Imperative Fabric.js controller for the annotation canvas.
@@ -25,6 +41,7 @@ export class FabricEditor {
 
   private undoStack: fabric.Object[] = []
   private redoStack: fabric.Object[] = []
+  private stepCount = 0
 
   /** Fired after any change so the UI can refresh (undo/redo availability). */
   onChange?: () => void
@@ -44,6 +61,7 @@ export class FabricEditor {
   }
 
   async loadImage(dataUrl: string): Promise<void> {
+    this.stepCount = 0
     this.bg = await fabric.FabricImage.fromURL(dataUrl)
     this.bg.set({
       selectable: false,
@@ -65,16 +83,25 @@ export class FabricEditor {
     this.canvas.requestRenderAll()
   }
 
+  private applyBrush(): void {
+    const c = this.canvas
+    if (!c.isDrawingMode) return
+    const brush = new fabric.PencilBrush(c)
+    if (this.tool === 'highlight') {
+      brush.color = hexToRgba(this.color, 0.35)
+      brush.width = Math.max(this.width * 4, 18)
+    } else {
+      brush.color = this.color
+      brush.width = this.width
+    }
+    c.freeDrawingBrush = brush
+  }
+
   setTool(t: Tool): void {
     this.tool = t
     const c = this.canvas
-    c.isDrawingMode = t === 'pen'
-    if (t === 'pen') {
-      const brush = new fabric.PencilBrush(c)
-      brush.color = this.color
-      brush.width = this.width
-      c.freeDrawingBrush = brush
-    }
+    c.isDrawingMode = t === 'pen' || t === 'highlight'
+    this.applyBrush()
     c.selection = t === 'select'
     c.forEachObject((o) => {
       if (o !== this.bg) o.selectable = t === 'select'
@@ -86,7 +113,7 @@ export class FabricEditor {
 
   setColor(color: string): void {
     this.color = color
-    if (this.canvas.freeDrawingBrush) this.canvas.freeDrawingBrush.color = color
+    this.applyBrush()
     const a = this.canvas.getActiveObject()
     if (a && a !== this.bg) {
       if (a.type === 'i-text' || a.type === 'text') a.set('fill', color)
@@ -98,7 +125,7 @@ export class FabricEditor {
 
   setWidth(width: number): void {
     this.width = width
-    if (this.canvas.freeDrawingBrush) this.canvas.freeDrawingBrush.width = width
+    this.applyBrush()
     const a = this.canvas.getActiveObject()
     if (a && a !== this.bg && a.type !== 'i-text' && a.type !== 'text') {
       a.set('strokeWidth', width)
@@ -124,9 +151,18 @@ export class FabricEditor {
   }
 
   private onDown(opt: any): void {
-    if (this.tool === 'select' || this.tool === 'pen') return
+    if (this.tool === 'select' || this.tool === 'pen' || this.tool === 'highlight') return
     const p = this.canvas.getScenePoint(opt.e)
     this.start = { x: p.x, y: p.y }
+
+    if (this.tool === 'step') {
+      this.stepCount += 1
+      const badge = this.makeStepBadge(p.x, p.y, this.stepCount)
+      this.canvas.add(badge)
+      this.canvas.setActiveObject(badge)
+      this.register(badge)
+      return
+    }
 
     if (this.tool === 'text') {
       const t = new fabric.IText('Text', {
@@ -279,6 +315,32 @@ export class FabricEditor {
       this.register(temp)
     }
     this.canvas.requestRenderAll()
+  }
+
+  private makeStepBadge(x: number, y: number, n: number): fabric.Group {
+    const r = Math.max(14, this.width * 3)
+    const circle = new fabric.Circle({
+      radius: r,
+      fill: this.color,
+      stroke: '#ffffff',
+      strokeWidth: Math.max(2, r * 0.12),
+      originX: 'center',
+      originY: 'center'
+    })
+    const label = new fabric.Text(String(n), {
+      fontSize: Math.round(r * 1.1),
+      fill: '#ffffff',
+      fontWeight: 'bold',
+      fontFamily: '-apple-system, system-ui, sans-serif',
+      originX: 'center',
+      originY: 'center'
+    })
+    return new fabric.Group([circle, label], {
+      left: x,
+      top: y,
+      originX: 'center',
+      originY: 'center'
+    })
   }
 
   private makeArrow(x1: number, y1: number, x2: number, y2: number): fabric.Group {
