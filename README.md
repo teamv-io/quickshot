@@ -83,9 +83,10 @@ git push --follow-tags
 - [x] Floating launcher bar + settings (opacity, position, custom shortcuts)
 - [x] MP4 / GIF export (ffmpeg) + video trim
 - [x] "Pretty" export (padding / background / shadow), numbered step badges, highlighter
-- [ ] System audio (loopback), webcam overlay, show-clicks
-- [ ] Pluggable uploaders (S3 / Imgur / custom) → instant share links
-- [ ] Code signing + notarization, auto-update
+- [x] System audio (loopback) + microphone mixing, webcam overlay
+- [x] Pluggable uploaders (Imgur / custom endpoint) → instant share links
+- [x] Auto-update (electron-updater); code signing + notarization (CI secrets-ready)
+- [ ] Show-clicks / keystroke overlay, scrolling capture, OCR
 
 ## License
 

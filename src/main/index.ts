@@ -32,6 +32,7 @@ import {
   deleteItem
 } from './library'
 import { toMp4, toGif, trimWebm } from './transcode'
+import { extractUrlFromResponse } from '../shared/uploader'
 import { autoUpdater } from 'electron-updater'
 import {
   initSettings,
@@ -626,18 +627,7 @@ function registerIpc(): void {
         const form = new FormData()
         form.append(cfg.customField || 'file', blob, item.filename)
         const res = await fetch(cfg.customUrl, { method: 'POST', body: form })
-        const text = await res.text()
-        if (cfg.customJsonPath) {
-          try {
-            url = cfg.customJsonPath
-              .split('.')
-              .reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], JSON.parse(text)) as string
-          } catch {
-            url = ''
-          }
-        } else {
-          url = text.trim()
-        }
+        url = extractUrlFromResponse(await res.text(), cfg.customJsonPath)
         if (!url) return { ok: false, error: 'No URL found in response' }
       } else {
         return { ok: false, error: 'No uploader configured (set one in Settings)' }
