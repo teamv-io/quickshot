@@ -14,10 +14,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-latest # Apple Silicon (arm64)
+            target: '--mac'
+          - os: macos-13 # Intel (x64)
             target: '--mac'
           - os: windows-latest
             target: '--win'
+          - os: ubuntu-latest
+            target: '--linux'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -41,5 +45,12 @@ jobs:
         run: npx electron-builder ${{ matrix.target }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Unsigned builds — skip macOS identity auto-discovery.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Code-signing (optional): add these repo secrets to enable signing +
+          # notarization. When CSC_LINK is empty, signing is auto-skipped and an
+          # unsigned build is produced (still fully functional).
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}

@@ -32,6 +32,7 @@ import {
   deleteItem
 } from './library'
 import { toMp4, toGif, trimWebm } from './transcode'
+import { autoUpdater } from 'electron-updater'
 import {
   initSettings,
   getSettings,
@@ -358,6 +359,29 @@ function applySettings(s: Settings): void {
   refreshTray()
 }
 
+function setupAutoUpdate(): void {
+  if (is.dev) return
+  autoUpdater.autoDownload = true
+  autoUpdater.on('error', () => {
+    /* ignore (e.g. unsigned macOS build can't self-update) */
+  })
+  autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+}
+
+function checkForUpdates(): void {
+  if (is.dev) {
+    dialog.showMessageBox({ message: 'Update checking runs in the installed app only.' })
+    return
+  }
+  autoUpdater.once('update-not-available', () =>
+    dialog.showMessageBox({ message: 'QuickShot by TeamV is up to date.' })
+  )
+  autoUpdater.once('update-available', () =>
+    dialog.showMessageBox({ message: 'An update is available — downloading in the background.' })
+  )
+  autoUpdater.checkForUpdates().catch((e) => dialog.showErrorBox('Update check failed', String(e)))
+}
+
 function openSettings(): void {
   if (settingsWindow) {
     settingsWindow.show()
@@ -423,7 +447,8 @@ function refreshTray(): void {
       },
       { label: 'Open Library…', click: () => openStudio(null) },
       { label: 'Settings…', click: () => openSettings() },
-      { label: 'About QuickShot', click: () => shell.openExternal('https://github.com') },
+      { label: 'Check for Updates…', click: () => checkForUpdates() },
+      { label: 'About QuickShot', click: () => shell.openExternal('https://github.com/teamv-io/quickshot') },
       { label: 'Quit QuickShot', click: () => app.quit() }
     ])
   )
@@ -661,6 +686,7 @@ app.whenReady().then(() => {
   const s = getSettings()
   registerShortcuts(s.shortcuts)
   if (s.floatBar.enabled) showFloatBar()
+  setupAutoUpdate()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) openStudio(null)
