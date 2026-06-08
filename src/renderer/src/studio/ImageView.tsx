@@ -17,6 +17,7 @@ import {
   Save as SaveIcon,
   Download,
   Sparkles,
+  Share2,
   type LucideIcon
 } from 'lucide-react'
 import type { LibraryItem } from '../../../preload'
@@ -131,6 +132,12 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
     const res = await window.api.libraryExport(item.id, await rendered())
     if (res.saved) flash('Exported')
   }
+  async function share(): Promise<void> {
+    await window.api.librarySaveEdits(item.id, editorRef.current!.exportPng())
+    flash('Uploading…')
+    const res = await window.api.libraryUpload(item.id)
+    flash(res.ok ? 'Link copied to clipboard' : `Upload failed: ${res.error}`)
+  }
 
   const ed = editorRef.current
   const btn = (active: boolean): string =>
@@ -206,6 +213,9 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
             title="Pretty export — padding, background, shadow"
           >
             <Sparkles size={15} /> Pretty
+          </button>
+          <button className={txtBtn} onClick={share} title="Upload & copy share link">
+            <Share2 size={15} /> Share
           </button>
           <button className={txtBtn} onClick={copy}>
             <CopyIcon size={15} /> Copy

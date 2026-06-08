@@ -112,6 +112,80 @@ export default function Settings(): JSX.Element {
           Click a shortcut, then press the key combo. Use at least one modifier (⌘/Ctrl/⌥/⇧).
         </p>
       </section>
+
+      {/* Uploader / share links */}
+      <section className="mt-7">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Share links
+        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-sm">Upload destination</span>
+          <select
+            value={settings.uploader.provider}
+            onChange={(e) =>
+              patch({ uploader: { provider: e.target.value as 'none' | 'custom' | 'imgur' } })
+            }
+            className="rounded-md bg-white/5 px-2 py-1 text-sm text-zinc-200 focus:outline-none"
+          >
+            <option value="none">None</option>
+            <option value="custom">Custom endpoint</option>
+            <option value="imgur">Imgur</option>
+          </select>
+        </div>
+
+        {settings.uploader.provider === 'imgur' && (
+          <label className="block text-sm">
+            <span className="mb-1 block text-zinc-400">Imgur Client-ID</span>
+            <input
+              value={settings.uploader.imgurClientId}
+              onChange={(e) => patch({ uploader: { imgurClientId: e.target.value } })}
+              placeholder="abc123…"
+              className="w-full rounded-md bg-white/5 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none"
+            />
+            <span className="mt-1 block text-xs text-zinc-600">Images only.</span>
+          </label>
+        )}
+
+        {settings.uploader.provider === 'custom' && (
+          <div className="space-y-2.5">
+            <label className="block text-sm">
+              <span className="mb-1 block text-zinc-400">Upload URL (multipart POST)</span>
+              <input
+                value={settings.uploader.customUrl}
+                onChange={(e) => patch({ uploader: { customUrl: e.target.value } })}
+                placeholder="https://example.com/upload"
+                className="w-full rounded-md bg-white/5 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none"
+              />
+            </label>
+            <div className="flex gap-2">
+              <label className="flex-1 text-sm">
+                <span className="mb-1 block text-zinc-400">File field name</span>
+                <input
+                  value={settings.uploader.customField}
+                  onChange={(e) => patch({ uploader: { customField: e.target.value } })}
+                  placeholder="file"
+                  className="w-full rounded-md bg-white/5 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                />
+              </label>
+              <label className="flex-1 text-sm">
+                <span className="mb-1 block text-zinc-400">Response URL path (optional)</span>
+                <input
+                  value={settings.uploader.customJsonPath}
+                  onChange={(e) => patch({ uploader: { customJsonPath: e.target.value } })}
+                  placeholder="data.link"
+                  className="w-full rounded-md bg-white/5 px-2 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                />
+              </label>
+            </div>
+            <p className="text-xs text-zinc-600">
+              Leave the path empty if the response body is the URL itself.
+            </p>
+          </div>
+        )}
+        <p className="mt-3 text-xs text-zinc-500">
+          The <strong>Share</strong> button in the editor uploads the item and copies the link.
+        </p>
+      </section>
     </div>
   )
 }

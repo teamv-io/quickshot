@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Scissors, Loader2 } from 'lucide-react'
+import { Download, Scissors, Loader2, Share2 } from 'lucide-react'
 import type { LibraryItem } from '../../../preload'
 
 type Format = 'webm' | 'mp4' | 'gif'
@@ -94,6 +94,16 @@ export default function VideoView({ item }: { item: LibraryItem }): JSX.Element 
     }
   }
 
+  async function share(): Promise<void> {
+    setBusy('Uploading…')
+    try {
+      const res = await window.api.libraryUpload(item.id)
+      flash(res.ok ? 'Link copied to clipboard' : `Upload failed: ${res.error}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function applyTrim(): Promise<void> {
     if (trimEnd - trimStart < 0.2) {
       flash('Trim range too short')
@@ -148,6 +158,9 @@ export default function VideoView({ item }: { item: LibraryItem }): JSX.Element 
               <Loader2 size={14} className="animate-spin" /> {busy}
             </span>
           )}
+          <button className={btn} disabled={!!busy} onClick={share} title="Upload & copy share link">
+            <Share2 size={15} /> Share
+          </button>
           <button className={btn} disabled={!!busy} onClick={() => exportAs('webm')}>
             <Download size={15} /> WebM
           </button>

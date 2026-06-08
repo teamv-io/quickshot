@@ -15,11 +15,19 @@ export interface Settings {
     captureFull: string
     record: string
   }
+  uploader: {
+    provider: 'none' | 'custom' | 'imgur'
+    customUrl: string
+    customField: string
+    customJsonPath: string
+    imgurClientId: string
+  }
 }
 
 export interface SettingsPatch {
   floatBar?: Partial<Settings['floatBar']>
   shortcuts?: Partial<Settings['shortcuts']>
+  uploader?: Partial<Settings['uploader']>
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,6 +36,13 @@ export const DEFAULT_SETTINGS: Settings = {
     captureArea: 'CommandOrControl+Shift+2',
     captureFull: 'CommandOrControl+Shift+1',
     record: 'CommandOrControl+Shift+R'
+  },
+  uploader: {
+    provider: 'none',
+    customUrl: '',
+    customField: 'file',
+    customJsonPath: '',
+    imgurClientId: ''
   }
 }
 
@@ -40,7 +55,8 @@ export function mergeSettings(base: Settings, patch: SettingsPatch | Partial<Set
       ...fb,
       customPos: { ...base.floatBar.customPos, ...(fb as Settings['floatBar']).customPos }
     },
-    shortcuts: { ...base.shortcuts, ...(patch.shortcuts ?? {}) }
+    shortcuts: { ...base.shortcuts, ...(patch.shortcuts ?? {}) },
+    uploader: { ...base.uploader, ...(patch.uploader ?? {}) }
   }
 }
 

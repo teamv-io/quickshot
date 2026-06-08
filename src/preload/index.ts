@@ -106,6 +106,8 @@ const api = {
     ipcRenderer.invoke('library:thumb', id, dataUrl),
   libraryReveal: (id: string): void => ipcRenderer.send('library:reveal', id),
   libraryStartDrag: (id: string): void => ipcRenderer.send('library:start-drag', id),
+  libraryUpload: (id: string): Promise<{ ok: boolean; url?: string; error?: string }> =>
+    ipcRenderer.invoke('library:upload', id),
   videoExport: (id: string, format: 'webm' | 'mp4' | 'gif'): Promise<SaveResult & { error?: string }> =>
     ipcRenderer.invoke('video:export', id, format),
   videoTrim: (id: string, start: number, end: number): Promise<{ ok: boolean; error?: string }> =>

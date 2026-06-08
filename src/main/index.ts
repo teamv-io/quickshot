@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { writeFile, rename } from 'fs/promises'
+import { writeFile, readFile, rename } from 'fs/promises'
 import {
   app,
   BrowserWindow,
@@ -594,6 +594,59 @@ function registerIpc(): void {
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle('library:upload', async (_e, id: string) => {
+    const item = getItem(id)
+    const p = mediaPath(id)
+    if (!item || !p) return { ok: false, error: 'not found' }
+    const cfg = getSettings().uploader
+    try {
+      const buf = await readFile(p)
+      const mime = item.type === 'image' ? 'image/png' : 'video/webm'
+      const blob = new Blob([buf], { type: mime })
+      let url = ''
+
+      if (cfg.provider === 'imgur') {
+        if (item.type !== 'image') return { ok: false, error: 'Imgur supports images only' }
+        if (!cfg.imgurClientId) return { ok: false, error: 'Set an Imgur Client-ID in Settings' }
+        const form = new FormData()
+        form.append('image', blob, item.filename)
+        const res = await fetch('https://api.imgur.com/3/image', {
+          method: 'POST',
+          headers: { Authorization: `Client-ID ${cfg.imgurClientId}` },
+          body: form
+        })
+        const json = (await res.json()) as { success?: boolean; data?: { link?: string } }
+        if (!json.success || !json.data?.link) return { ok: false, error: 'Imgur upload failed' }
+        url = json.data.link
+      } else if (cfg.provider === 'custom') {
+        if (!cfg.customUrl) return { ok: false, error: 'Set an upload URL in Settings' }
+        const form = new FormData()
+        form.append(cfg.customField || 'file', blob, item.filename)
+        const res = await fetch(cfg.customUrl, { method: 'POST', body: form })
+        const text = await res.text()
+        if (cfg.customJsonPath) {
+          try {
+            url = cfg.customJsonPath
+              .split('.')
+              .reduce<unknown>((o, k) => (o as Record<string, unknown>)?.[k], JSON.parse(text)) as string
+          } catch {
+            url = ''
+          }
+        } else {
+          url = text.trim()
+        }
+        if (!url) return { ok: false, error: 'No URL found in response' }
+      } else {
+        return { ok: false, error: 'No uploader configured (set one in Settings)' }
+      }
+
+      clipboard.writeText(url)
+      return { ok: true, url }
+    } catch (err) {
+      return { ok: false, error: String(err) }
     }
   })
 
