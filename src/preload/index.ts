@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import type { Settings, SettingsPatch } from '../shared/settings'
+
+export type { Settings, SettingsPatch, FloatPosition } from '../shared/settings'
 
 export interface OverlaySource {
   dataUrl: string
@@ -33,15 +36,6 @@ export interface SaveResult {
   filePath?: string
 }
 
-export type FloatPosition = 'left-center' | 'right-center' | 'top-center' | 'bottom-center'
-export interface Settings {
-  floatBar: { enabled: boolean; opacity: number; position: FloatPosition }
-  shortcuts: { captureArea: string; captureFull: string; record: string }
-}
-export interface SettingsPatch {
-  floatBar?: Partial<Settings['floatBar']>
-  shortcuts?: Partial<Settings['shortcuts']>
-}
 
 const api = {
   // ── Capture overlay ──────────────────────────────────────────────

@@ -1,54 +1,21 @@
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { app } from 'electron'
+import { DEFAULT_SETTINGS, mergeSettings, type Settings, type SettingsPatch } from '../shared/settings'
 
-export type FloatPosition = 'left-center' | 'right-center' | 'top-center' | 'bottom-center'
-
-export interface Settings {
-  floatBar: {
-    enabled: boolean
-    opacity: number // 0.3 – 1.0
-    position: FloatPosition
-  }
-  shortcuts: {
-    captureArea: string
-    captureFull: string
-    record: string
-  }
-}
-
-const DEFAULTS: Settings = {
-  floatBar: { enabled: true, opacity: 0.65, position: 'left-center' },
-  shortcuts: {
-    captureArea: 'CommandOrControl+Shift+2',
-    captureFull: 'CommandOrControl+Shift+1',
-    record: 'CommandOrControl+Shift+R'
-  }
-}
-
-export interface SettingsPatch {
-  floatBar?: Partial<Settings['floatBar']>
-  shortcuts?: Partial<Settings['shortcuts']>
-}
+export type { Settings, SettingsPatch, FloatPosition } from '../shared/settings'
 
 let settings: Settings
 let file: string
-
-function merge(base: Settings, patch: SettingsPatch | Partial<Settings>): Settings {
-  return {
-    floatBar: { ...base.floatBar, ...(patch.floatBar ?? {}) },
-    shortcuts: { ...base.shortcuts, ...(patch.shortcuts ?? {}) }
-  }
-}
 
 export function initSettings(): void {
   file = join(app.getPath('userData'), 'settings.json')
   try {
     settings = existsSync(file)
-      ? merge(DEFAULTS, JSON.parse(readFileSync(file, 'utf8')))
-      : merge(DEFAULTS, {})
+      ? mergeSettings(DEFAULT_SETTINGS, JSON.parse(readFileSync(file, 'utf8')))
+      : mergeSettings(DEFAULT_SETTINGS, {})
   } catch {
-    settings = merge(DEFAULTS, {})
+    settings = mergeSettings(DEFAULT_SETTINGS, {})
   }
 }
 
@@ -57,7 +24,7 @@ export function getSettings(): Settings {
 }
 
 export function updateSettings(patch: SettingsPatch): Settings {
-  settings = merge(settings, patch)
+  settings = mergeSettings(settings, patch)
   try {
     writeFileSync(file, JSON.stringify(settings, null, 2))
   } catch {
