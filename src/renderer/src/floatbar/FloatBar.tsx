@@ -28,6 +28,9 @@ export default function FloatBar(): JSX.Element {
     window.api.floatMove(e.screenX - dragRef.current.dx, e.screenY - dragRef.current.dy)
   }
   function onPointerUp(e: React.PointerEvent): void {
+    if (dragRef.current) {
+      window.api.floatMoved(e.screenX - dragRef.current.dx, e.screenY - dragRef.current.dy)
+    }
     dragRef.current = null
     ;(e.currentTarget as Element).releasePointerCapture?.(e.pointerId)
   }

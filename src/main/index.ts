@@ -24,7 +24,10 @@ import {
   addImage,
   addVideo,
   readMedia,
+  mediaPath,
   updateImage,
+  setTitle,
+  setThumb,
   deleteItem
 } from './library'
 import {
@@ -262,13 +265,22 @@ function floatBarGeometry(pos: FloatPosition): {
   }
 }
 
+function dragFallbackIcon(): Electron.NativeImage {
+  return nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAYElEQVR4nO2UwQ0AIAgD3X9pnYAItErQXsLL0B4fxxCiKdOYktIrMtFyqkS2nCKBlkMSmUCqBBLSX4BxAZThWY6+S+A9geMZf/8DVsguLLOTlogMRGk5KkGltNwrI0Q/FoRHEvzZ3FPdAAAAAElFTkSuQmCC'
+  )
+}
+
 function showFloatBar(): void {
-  const { opacity, position } = getSettings().floatBar
+  const { opacity, position, customPos } = getSettings().floatBar
   const g = floatBarGeometry(position)
   floatBarVertical = g.vertical
+  const saved = customPos[position]
+  const x = saved ? saved.x : g.x
+  const y = saved ? saved.y : g.y
 
   if (floatBarWindow) {
-    floatBarWindow.setBounds({ x: g.x, y: g.y, width: g.width, height: g.height })
+    floatBarWindow.setBounds({ x, y, width: g.width, height: g.height })
     floatBarWindow.setOpacity(opacity)
     floatBarWindow.showInactive()
     return
@@ -276,8 +288,8 @@ function showFloatBar(): void {
   floatBarWindow = new BrowserWindow({
     width: g.width,
     height: g.height,
-    x: g.x,
-    y: g.y,
+    x,
+    y,
     frame: false,
     transparent: true,
     resizable: false,
@@ -528,6 +540,34 @@ function registerIpc(): void {
     return listItems()
   })
 
+  ipcMain.handle('library:rename', (_e, id: string, title: string) => {
+    setTitle(id, title, Date.now())
+    broadcastLibraryChanged()
+    return listItems()
+  })
+
+  // Lazily-generated video poster frame from the renderer.
+  ipcMain.handle('library:thumb', (_e, id: string, dataUrl: string) => {
+    setThumb(id, dataUrl, Date.now())
+    broadcastLibraryChanged()
+    return true
+  })
+
+  ipcMain.on('library:reveal', (_e, id: string) => {
+    const p = mediaPath(id)
+    if (p) shell.showItemInFolder(p)
+  })
+
+  // Native file drag-out (drag a thumbnail into Finder/Slack/email).
+  ipcMain.on('library:start-drag', (e, id: string) => {
+    const item = getItem(id)
+    const p = mediaPath(id)
+    if (!item || !p) return
+    let icon = item.thumb ? nativeImage.createFromDataURL(item.thumb) : nativeImage.createEmpty()
+    if (icon.isEmpty()) icon = dragFallbackIcon()
+    e.sender.startDrag({ file: p, icon: icon.resize({ width: 128 }) })
+  })
+
   // ── Floating launcher bar ──────────────────────────────────────────
   ipcMain.on('float:capture', () => void openOverlay('screenshot'))
   ipcMain.on('float:record', () => toggleRecording())
@@ -537,6 +577,11 @@ function registerIpc(): void {
   ipcMain.on('float:move', (_e, x: number, y: number) =>
     floatBarWindow?.setPosition(Math.round(x), Math.round(y))
   )
+  // Persist the dragged position for the current edge.
+  ipcMain.on('float:moved', (_e, x: number, y: number) => {
+    const pos = getSettings().floatBar.position
+    updateSettings({ floatBar: { customPos: { [pos]: { x: Math.round(x), y: Math.round(y) } } } })
+  })
   ipcMain.on('float:settings', () => openSettings())
 
   // ── Settings ───────────────────────────────────────────────────────

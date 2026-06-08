@@ -7,6 +7,7 @@ import {
   Pencil,
   Type,
   EyeOff,
+  Crop,
   Undo2,
   Redo2,
   Trash2,
@@ -20,6 +21,7 @@ import { FabricEditor, type Tool } from '../editor/FabricEditor'
 
 const TOOLS: { id: Tool; label: string; Icon: LucideIcon }[] = [
   { id: 'select', label: 'Select / Move', Icon: MousePointer2 },
+  { id: 'crop', label: 'Crop', Icon: Crop },
   { id: 'rect', label: 'Rectangle', Icon: Square },
   { id: 'ellipse', label: 'Ellipse', Icon: Circle },
   { id: 'arrow', label: 'Arrow', Icon: MoveUpRight },
@@ -44,6 +46,7 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
     if (!canvasRef.current) return
     const ed = new FabricEditor(canvasRef.current)
     ed.onChange = () => force((n) => n + 1)
+    ed.onToolChange = (t) => setTool(t)
     editorRef.current = ed
     window.api.libraryImage(item.id).then((dataUrl) => {
       if (dataUrl) ed.loadImage(dataUrl).then(() => setReady(true))

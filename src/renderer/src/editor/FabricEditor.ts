@@ -1,6 +1,6 @@
 import * as fabric from 'fabric'
 
-export type Tool = 'select' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'pen' | 'blur'
+export type Tool = 'select' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'pen' | 'blur' | 'crop'
 
 /**
  * Imperative Fabric.js controller for the annotation canvas.
@@ -28,6 +28,8 @@ export class FabricEditor {
 
   /** Fired after any change so the UI can refresh (undo/redo availability). */
   onChange?: () => void
+  /** Fired when the editor changes the active tool itself (e.g. after a crop). */
+  onToolChange?: (tool: Tool) => void
 
   constructor(el: HTMLCanvasElement) {
     this.canvas = new fabric.Canvas(el, {
@@ -189,6 +191,18 @@ export class FabricEditor {
           strokeDashArray: [4, 4]
         })
         break
+      case 'crop':
+        obj = new fabric.Rect({
+          left: p.x,
+          top: p.y,
+          width: 0,
+          height: 0,
+          fill: 'rgba(255,255,255,0.08)',
+          stroke: '#ffffff',
+          strokeWidth: 1,
+          strokeDashArray: [6, 4]
+        })
+        break
       default:
         this.drawing = false
         return
@@ -206,7 +220,7 @@ export class FabricEditor {
     const w = Math.abs(p.x - this.start.x)
     const h = Math.abs(p.y - this.start.y)
 
-    if (this.tool === 'rect' || this.tool === 'blur') {
+    if (this.tool === 'rect' || this.tool === 'blur' || this.tool === 'crop') {
       this.temp.set({ left, top, width: w, height: h })
     } else if (this.tool === 'ellipse') {
       ;(this.temp as fabric.Ellipse).set({ left, top, rx: w / 2, ry: h / 2 })
@@ -232,6 +246,18 @@ export class FabricEditor {
     if (tooSmall) {
       this.canvas.remove(temp)
       this.canvas.requestRenderAll()
+      return
+    }
+
+    if (this.tool === 'crop') {
+      const r = {
+        left: temp.left ?? 0,
+        top: temp.top ?? 0,
+        width: temp.width ?? 0,
+        height: temp.height ?? 0
+      }
+      this.canvas.remove(temp)
+      void this.cropTo(r)
       return
     }
 
@@ -302,6 +328,34 @@ export class FabricEditor {
     this.canvas.add(patch)
     this.register(patch)
     this.canvas.requestRenderAll()
+  }
+
+  /** Flatten the canvas to the chosen rect and reload it as the new image. */
+  private async cropTo(r: {
+    left: number
+    top: number
+    width: number
+    height: number
+  }): Promise<void> {
+    if (r.width < 4 || r.height < 4) return
+    this.canvas.discardActiveObject()
+    this.canvas.requestRenderAll()
+    const z = this.canvas.getZoom() || 1
+    const dataUrl = this.canvas.toDataURL({
+      format: 'png',
+      left: r.left * z,
+      top: r.top * z,
+      width: r.width * z,
+      height: r.height * z,
+      multiplier: 1 / z
+    })
+    this.canvas.clear()
+    this.undoStack = []
+    this.redoStack = []
+    await this.loadImage(dataUrl)
+    this.tool = 'select'
+    this.onToolChange?.('select')
+    this.onChange?.()
   }
 
   private register(obj: fabric.Object): void {

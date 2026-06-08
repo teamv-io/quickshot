@@ -127,6 +127,11 @@ export function setTitle(id: string, title: string, now: number): void {
   db.prepare('UPDATE items SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id)
 }
 
+/** Set/replace an item's thumbnail (e.g. a lazily-generated video poster frame). */
+export function setThumb(id: string, thumb: string, now: number): void {
+  db.prepare('UPDATE items SET thumb = ?, updated_at = ? WHERE id = ?').run(thumb, now, id)
+}
+
 export function deleteItem(id: string): void {
   const item = getItem(id)
   if (!item) return

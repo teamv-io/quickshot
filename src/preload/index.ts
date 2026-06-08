@@ -94,6 +94,12 @@ const api = {
   libraryExport: (id: string, dataUrl: string | null): Promise<SaveResult> =>
     ipcRenderer.invoke('library:export', id, dataUrl),
   libraryDelete: (id: string): Promise<LibraryItem[]> => ipcRenderer.invoke('library:delete', id),
+  libraryRename: (id: string, title: string): Promise<LibraryItem[]> =>
+    ipcRenderer.invoke('library:rename', id, title),
+  librarySetThumb: (id: string, dataUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke('library:thumb', id, dataUrl),
+  libraryReveal: (id: string): void => ipcRenderer.send('library:reveal', id),
+  libraryStartDrag: (id: string): void => ipcRenderer.send('library:start-drag', id),
 
   // ── Floating launcher bar ────────────────────────────────────────
   onFloatState(cb: (state: { recording: boolean }) => void): () => void {
@@ -108,6 +114,7 @@ const api = {
   floatOpenLibrary: (): void => ipcRenderer.send('float:library'),
   floatHide: (): void => ipcRenderer.send('float:hide'),
   floatMove: (x: number, y: number): void => ipcRenderer.send('float:move', x, y),
+  floatMoved: (x: number, y: number): void => ipcRenderer.send('float:moved', x, y),
   floatOpenSettings: (): void => ipcRenderer.send('float:settings'),
 
   // ── Settings ─────────────────────────────────────────────────────

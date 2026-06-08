@@ -19,9 +19,14 @@ export default function VideoView({ item }: { item: LibraryItem }): JSX.Element 
       }
       const url = URL.createObjectURL(new Blob([buf], { type: 'video/webm' }))
       urlRef.current = url
-      if (videoRef.current) {
-        videoRef.current.src = url
-        videoRef.current.play().catch(() => {})
+      const video = videoRef.current
+      if (video) {
+        video.src = url
+        // Generate a poster frame for the filmstrip the first time it's viewed.
+        if (!item.thumb) {
+          video.addEventListener('loadeddata', () => capturePoster(video), { once: true })
+        }
+        video.play().catch(() => {})
       }
       setReady(true)
     })
@@ -33,6 +38,24 @@ export default function VideoView({ item }: { item: LibraryItem }): JSX.Element 
       }
     }
   }, [item.id])
+
+  function capturePoster(video: HTMLVideoElement): void {
+    const vw = video.videoWidth
+    const vh = video.videoHeight
+    if (!vw || !vh) return
+    const scale = Math.min(1, 320 / Math.max(vw, vh))
+    const c = document.createElement('canvas')
+    c.width = Math.round(vw * scale)
+    c.height = Math.round(vh * scale)
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(video, 0, 0, c.width, c.height)
+    try {
+      window.api.librarySetThumb(item.id, c.toDataURL('image/jpeg', 0.6))
+    } catch {
+      // tainted/unsupported — skip poster
+    }
+  }
 
   function flash(msg: string): void {
     setToast(msg)
