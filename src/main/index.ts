@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { writeFile } from 'fs/promises'
+import { writeFile, rename } from 'fs/promises'
 import {
   app,
   BrowserWindow,
@@ -26,10 +26,12 @@ import {
   readMedia,
   mediaPath,
   updateImage,
+  updateVideoMeta,
   setTitle,
   setThumb,
   deleteItem
 } from './library'
+import { toMp4, toGif, trimWebm } from './transcode'
 import {
   initSettings,
   getSettings,
@@ -503,34 +505,64 @@ function registerIpc(): void {
 
   ipcMain.handle('library:export', async (_e, id: string, dataUrl: string | null) => {
     const item = getItem(id)
-    if (!item) return { saved: false }
+    if (!item || item.type !== 'image') return { saved: false }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-
-    if (item.type === 'image') {
-      const { canceled, filePath } = await dialog.showSaveDialog({
-        title: 'Export image',
-        defaultPath: join(app.getPath('pictures'), `QuickShot-${stamp}.png`),
-        filters: [{ name: 'PNG image', extensions: ['png'] }]
-      })
-      if (canceled || !filePath) return { saved: false }
-      const buf = dataUrl
-        ? Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
-        : readMedia(id)
-      if (!buf) return { saved: false }
-      await writeFile(filePath, buf)
-      return { saved: true, filePath }
-    }
-
     const { canceled, filePath } = await dialog.showSaveDialog({
-      title: 'Export recording',
-      defaultPath: join(app.getPath('videos'), `QuickShot-${stamp}.webm`),
-      filters: [{ name: 'WebM video', extensions: ['webm'] }]
+      title: 'Export image',
+      defaultPath: join(app.getPath('pictures'), `QuickShot-${stamp}.png`),
+      filters: [{ name: 'PNG image', extensions: ['png'] }]
     })
     if (canceled || !filePath) return { saved: false }
-    const buf = readMedia(id)
+    const buf = dataUrl
+      ? Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
+      : readMedia(id)
     if (!buf) return { saved: false }
     await writeFile(filePath, buf)
     return { saved: true, filePath }
+  })
+
+  // Export a recording as WebM (original), MP4, or GIF.
+  ipcMain.handle('video:export', async (_e, id: string, format: 'webm' | 'mp4' | 'gif') => {
+    const item = getItem(id)
+    const src = mediaPath(id)
+    if (!item || item.type !== 'video' || !src) return { saved: false }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const filters: Record<string, Electron.FileFilter> = {
+      webm: { name: 'WebM video', extensions: ['webm'] },
+      mp4: { name: 'MP4 video', extensions: ['mp4'] },
+      gif: { name: 'Animated GIF', extensions: ['gif'] }
+    }
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export recording',
+      defaultPath: join(app.getPath('videos'), `QuickShot-${stamp}.${format}`),
+      filters: [filters[format]]
+    })
+    if (canceled || !filePath) return { saved: false }
+    try {
+      if (format === 'webm') await writeFile(filePath, readMedia(id)!)
+      else if (format === 'mp4') await toMp4(src, filePath)
+      else await toGif(src, filePath)
+    } catch (err) {
+      return { saved: false, error: (err as Error).message }
+    }
+    return { saved: true, filePath }
+  })
+
+  // Trim a recording in place to [start,end] seconds.
+  ipcMain.handle('video:trim', async (_e, id: string, start: number, end: number) => {
+    const item = getItem(id)
+    const src = mediaPath(id)
+    if (!item || item.type !== 'video' || !src) return { ok: false }
+    const tmp = `${src}.trimming.webm`
+    try {
+      await trimWebm(src, tmp, start, end)
+      await rename(tmp, src)
+      updateVideoMeta(id, Math.max(0, end - start), Date.now())
+      broadcastLibraryChanged()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
   })
 
   ipcMain.handle('library:delete', (_e, id: string) => {

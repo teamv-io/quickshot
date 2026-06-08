@@ -100,6 +100,10 @@ const api = {
     ipcRenderer.invoke('library:thumb', id, dataUrl),
   libraryReveal: (id: string): void => ipcRenderer.send('library:reveal', id),
   libraryStartDrag: (id: string): void => ipcRenderer.send('library:start-drag', id),
+  videoExport: (id: string, format: 'webm' | 'mp4' | 'gif'): Promise<SaveResult & { error?: string }> =>
+    ipcRenderer.invoke('video:export', id, format),
+  videoTrim: (id: string, start: number, end: number): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('video:trim', id, start, end),
 
   // ── Floating launcher bar ────────────────────────────────────────
   onFloatState(cb: (state: { recording: boolean }) => void): () => void {

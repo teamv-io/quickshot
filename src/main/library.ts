@@ -132,6 +132,15 @@ export function setThumb(id: string, thumb: string, now: number): void {
   db.prepare('UPDATE items SET thumb = ?, updated_at = ? WHERE id = ?').run(thumb, now, id)
 }
 
+/** After replacing a video's bytes on disk (e.g. a trim): update duration, clear poster. */
+export function updateVideoMeta(id: string, durationSec: number | null, now: number): void {
+  db.prepare('UPDATE items SET duration = ?, thumb = NULL, updated_at = ? WHERE id = ?').run(
+    durationSec,
+    now,
+    id
+  )
+}
+
 export function deleteItem(id: string): void {
   const item = getItem(id)
   if (!item) return
