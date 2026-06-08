@@ -26,9 +26,13 @@ jobs:
           node-version: 20
           cache: npm
 
-      # Skip optional deps so Fabric's optional node-canvas (needs a full VS
-      # toolchain on Windows) is never pulled in — we only use the browser canvas.
-      - run: npm ci --omit=optional
+      - run: npm ci
+
+      # Remove Fabric's optional node-canvas: we only use the browser canvas, and
+      # rebuilding node-canvas needs a full VS/GTK toolchain that breaks on Windows.
+      - name: Drop optional node-canvas
+        shell: bash
+        run: rm -rf node_modules/canvas
 
       # Bundle main/preload/renderer (electron-vite), then package + publish.
       - run: npm run build
