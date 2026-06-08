@@ -17,10 +17,24 @@ import {
 } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { captureActiveDisplay } from './capture'
-
-const CAPTURE_SHORTCUT = 'CommandOrControl+Shift+2'
-const CAPTURE_FULL_SHORTCUT = 'CommandOrControl+Shift+1'
-const RECORD_SHORTCUT = 'CommandOrControl+Shift+R'
+import {
+  initLibrary,
+  listItems,
+  getItem,
+  addImage,
+  addVideo,
+  readMedia,
+  updateImage,
+  deleteItem
+} from './library'
+import {
+  initSettings,
+  getSettings,
+  updateSettings,
+  type Settings,
+  type SettingsPatch,
+  type FloatPosition
+} from './settings'
 
 type OverlayPurpose = 'screenshot' | 'record'
 interface RegionFraction {
@@ -32,19 +46,17 @@ interface RegionFraction {
 
 let tray: Tray | null = null
 let overlayWindow: BrowserWindow | null = null
-let editorWindow: BrowserWindow | null = null
+let studioWindow: BrowserWindow | null = null
 let recorderWindow: BrowserWindow | null = null
-let videoWindow: BrowserWindow | null = null
+let floatBarWindow: BrowserWindow | null = null
+let settingsWindow: BrowserWindow | null = null
+let floatBarVertical = true
 let isRecording = false
 
-/** Image handed off from the capture overlay to the editor window. */
-let pendingEditorImage: string | null = null
+/** Item the Studio window should focus when it (re)opens. */
+let currentStudioItem: string | null = null
 
-/** Recorded clip handed off from the recorder to the video review window. */
-let pendingVideoBuffer: ArrayBuffer | null = null
-
-/** What the region overlay is selecting for, and the display it lives on. */
-let overlayPurpose: OverlayPurpose = 'screenshot'
+/** Display the region overlay lives on (used to target recordings). */
 let overlayDisplayId: number | null = null
 
 /** Target display/region for the next recording. */
@@ -61,14 +73,45 @@ function loadRoute(win: BrowserWindow, hash: string): void {
   }
 }
 
+function broadcastLibraryChanged(): void {
+  studioWindow?.webContents.send('library:changed')
+}
+
+/** Open (or focus) the Studio window, optionally jumping to a specific item. */
+function openStudio(itemId: string | null): void {
+  currentStudioItem = itemId
+  if (studioWindow) {
+    studioWindow.show()
+    studioWindow.focus()
+    studioWindow.webContents.send('library:changed')
+    if (itemId) studioWindow.webContents.send('studio:show-item', itemId)
+    return
+  }
+  studioWindow = new BrowserWindow({
+    width: 1200,
+    height: 840,
+    minWidth: 820,
+    minHeight: 560,
+    title: 'QuickShot',
+    backgroundColor: '#1e1e22',
+    show: false,
+    webPreferences: { preload, sandbox: false }
+  })
+  loadRoute(studioWindow, 'studio')
+  studioWindow.once('ready-to-show', () => studioWindow?.show())
+  studioWindow.on('closed', () => {
+    studioWindow = null
+  })
+}
+
 /** Open the full-screen region selector, for either a screenshot or a recording. */
 async function openOverlay(purpose: OverlayPurpose): Promise<void> {
   if (overlayWindow) return
   try {
+    floatBarWindow?.hide() // keep the launcher clear of the selection
     const cursor = screen.getCursorScreenPoint()
     const display = screen.getDisplayNearestPoint(cursor)
     const { dataUrl, bounds, scaleFactor } = await captureActiveDisplay()
-    overlayPurpose = purpose
     overlayDisplayId = display.id
 
     overlayWindow = new BrowserWindow({
@@ -96,12 +139,7 @@ async function openOverlay(purpose: OverlayPurpose): Promise<void> {
     if (process.platform === 'darwin') {
       overlayWindow.setSimpleFullScreen(true)
     }
-    overlayWindow.setBounds({
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height
-    })
+    overlayWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height })
     // 'screen-saver' level draws above the system menu bar.
     overlayWindow.setAlwaysOnTop(true, 'screen-saver')
     loadRoute(overlayWindow, 'overlay')
@@ -111,10 +149,12 @@ async function openOverlay(purpose: OverlayPurpose): Promise<void> {
     })
     overlayWindow.on('closed', () => {
       overlayWindow = null
+      if (getSettings().floatBar.enabled) floatBarWindow?.showInactive()
     })
   } catch (err) {
     overlayWindow?.close()
     overlayWindow = null
+    if (getSettings().floatBar.enabled) floatBarWindow?.showInactive()
     dialog.showErrorBox(
       'Capture failed',
       `${(err as Error).message}\n\nOn macOS, grant Screen Recording permission in System Settings ▸ Privacy & Security, then relaunch.`
@@ -122,63 +162,20 @@ async function openOverlay(purpose: OverlayPurpose): Promise<void> {
   }
 }
 
-/** Grab the whole active display and jump straight to the editor. */
+/** Grab the whole active display, store it in the library, open Studio. */
 async function captureFullScreen(): Promise<void> {
   try {
     const { dataUrl } = await captureActiveDisplay()
-    pendingEditorImage = dataUrl
-    openEditor()
+    const buf = Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
+    const item = addImage(buf, Date.now())
+    broadcastLibraryChanged()
+    openStudio(item.id)
   } catch (err) {
     dialog.showErrorBox(
       'Capture failed',
       `${(err as Error).message}\n\nOn macOS, grant Screen Recording permission in System Settings ▸ Privacy & Security, then relaunch.`
     )
   }
-}
-
-function openEditor(): void {
-  if (editorWindow) {
-    editorWindow.close()
-    editorWindow = null
-  }
-  editorWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
-    minWidth: 720,
-    minHeight: 520,
-    title: 'QuickShot — Editor',
-    backgroundColor: '#1e1e22',
-    show: false,
-    webPreferences: { preload, sandbox: false }
-  })
-  loadRoute(editorWindow, 'editor')
-  editorWindow.once('ready-to-show', () => editorWindow?.show())
-  editorWindow.on('closed', () => {
-    editorWindow = null
-  })
-}
-
-function openVideoEditor(): void {
-  if (videoWindow) {
-    videoWindow.close()
-    videoWindow = null
-  }
-  videoWindow = new BrowserWindow({
-    width: 1000,
-    height: 760,
-    minWidth: 640,
-    minHeight: 480,
-    title: 'QuickShot — Recording',
-    backgroundColor: '#1e1e22',
-    show: false,
-    webPreferences: { preload, sandbox: false }
-  })
-  loadRoute(videoWindow, 'video')
-  videoWindow.once('ready-to-show', () => videoWindow?.show())
-  videoWindow.on('closed', () => {
-    videoWindow = null
-    pendingVideoBuffer = null
-  })
 }
 
 function openRecorderBar(withMic: boolean): void {
@@ -187,8 +184,7 @@ function openRecorderBar(withMic: boolean): void {
     return
   }
   const display =
-    (recordDisplayId != null &&
-      screen.getAllDisplays().find((d) => d.id === recordDisplayId)) ||
+    (recordDisplayId != null && screen.getAllDisplays().find((d) => d.id === recordDisplayId)) ||
     screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const { workArea } = display
   const barW = 320
@@ -237,6 +233,139 @@ function toggleRecording(): void {
   else void openOverlay('record')
 }
 
+// ── Floating launcher bar ────────────────────────────────────────────
+function floatBarGeometry(pos: FloatPosition): {
+  x: number
+  y: number
+  width: number
+  height: number
+  vertical: boolean
+} {
+  const { workArea } = screen.getPrimaryDisplay()
+  const vertical = pos === 'left-center' || pos === 'right-center'
+  const longSide = 288
+  const shortSide = 56
+  const width = vertical ? shortSide : longSide
+  const height = vertical ? longSide : shortSide
+  const m = 16
+  const cx = Math.round(workArea.x + (workArea.width - width) / 2)
+  const cy = Math.round(workArea.y + (workArea.height - height) / 2)
+  switch (pos) {
+    case 'left-center':
+      return { x: workArea.x + m, y: cy, width, height, vertical }
+    case 'right-center':
+      return { x: workArea.x + workArea.width - width - m, y: cy, width, height, vertical }
+    case 'top-center':
+      return { x: cx, y: workArea.y + m, width, height, vertical }
+    case 'bottom-center':
+      return { x: cx, y: workArea.y + workArea.height - height - m, width, height, vertical }
+  }
+}
+
+function showFloatBar(): void {
+  const { opacity, position } = getSettings().floatBar
+  const g = floatBarGeometry(position)
+  floatBarVertical = g.vertical
+
+  if (floatBarWindow) {
+    floatBarWindow.setBounds({ x: g.x, y: g.y, width: g.width, height: g.height })
+    floatBarWindow.setOpacity(opacity)
+    floatBarWindow.showInactive()
+    return
+  }
+  floatBarWindow = new BrowserWindow({
+    width: g.width,
+    height: g.height,
+    x: g.x,
+    y: g.y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false, // moved manually via drag handle (keeps the window non-activating)
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    webPreferences: { preload, sandbox: false }
+  })
+  floatBarWindow.setContentProtection(true) // never appears in captures/recordings
+  floatBarWindow.setAlwaysOnTop(true, 'screen-saver')
+  floatBarWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  floatBarWindow.setOpacity(opacity)
+  loadRoute(floatBarWindow, 'floatbar')
+  floatBarWindow.once('ready-to-show', () => floatBarWindow?.showInactive())
+  floatBarWindow.on('closed', () => {
+    floatBarWindow = null
+  })
+}
+
+function destroyFloatBar(): void {
+  floatBarWindow?.close()
+  floatBarWindow = null
+}
+
+function toggleFloatBar(): void {
+  const next = !getSettings().floatBar.enabled
+  applySettings(updateSettings({ floatBar: { enabled: next } }))
+}
+
+/** (Re)register global shortcuts from settings; returns accelerators that failed to bind. */
+function registerShortcuts(sc: Settings['shortcuts']): string[] {
+  globalShortcut.unregisterAll()
+  const failed: string[] = []
+  const bind = (accel: string, fn: () => void): void => {
+    if (!accel) return
+    try {
+      if (!globalShortcut.register(accel, fn)) failed.push(accel)
+    } catch {
+      failed.push(accel)
+    }
+  }
+  bind(sc.captureArea, () => openOverlay('screenshot'))
+  bind(sc.captureFull, () => captureFullScreen())
+  bind(sc.record, () => toggleRecording())
+  return failed
+}
+
+/** Apply a full settings object to the live windows + shortcuts + tray. */
+function applySettings(s: Settings): void {
+  registerShortcuts(s.shortcuts)
+  if (s.floatBar.enabled) {
+    // Recreate so geometry/orientation always match the chosen position.
+    destroyFloatBar()
+    showFloatBar()
+  } else {
+    destroyFloatBar()
+  }
+  refreshTray()
+}
+
+function openSettings(): void {
+  if (settingsWindow) {
+    settingsWindow.show()
+    settingsWindow.focus()
+    return
+  }
+  settingsWindow = new BrowserWindow({
+    width: 540,
+    height: 600,
+    resizable: false,
+    title: 'QuickShot — Settings',
+    backgroundColor: '#1e1e22',
+    show: false,
+    webPreferences: { preload, sandbox: false }
+  })
+  loadRoute(settingsWindow, 'settings')
+  settingsWindow.once('ready-to-show', () => settingsWindow?.show())
+  settingsWindow.on('closed', () => {
+    settingsWindow = null
+  })
+}
+
 function buildTray(): void {
   // Camera-aperture ring template icon (alpha mask; macOS tints it to the menu bar).
   const icon = nativeImage
@@ -251,25 +380,35 @@ function buildTray(): void {
 }
 
 function refreshTray(): void {
+  floatBarWindow?.webContents.send('float:state', { recording: isRecording })
   if (!tray) return
+  const sc = getSettings().shortcuts
   const recordItems: Electron.MenuItemConstructorOptions[] = isRecording
-    ? [{ label: `■ Stop recording  (${RECORD_SHORTCUT})`, click: () => stopRecording() }]
-    : [{ label: `Record…  (${RECORD_SHORTCUT})`, click: () => void openOverlay('record') }]
+    ? [{ label: `■ Stop recording  (${sc.record})`, click: () => stopRecording() }]
+    : [{ label: `Record…  (${sc.record})`, click: () => void openOverlay('record') }]
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: `Capture selected area…  (${CAPTURE_SHORTCUT})`,
+        label: `Capture selected area…  (${sc.captureArea})`,
         enabled: !isRecording,
         click: () => openOverlay('screenshot')
       },
       {
-        label: `Capture full screen  (${CAPTURE_FULL_SHORTCUT})`,
+        label: `Capture full screen  (${sc.captureFull})`,
         enabled: !isRecording,
         click: () => captureFullScreen()
       },
       { type: 'separator' },
       ...recordItems,
       { type: 'separator' },
+      {
+        label: 'Floating bar',
+        type: 'checkbox',
+        checked: getSettings().floatBar.enabled,
+        click: () => toggleFloatBar()
+      },
+      { label: 'Open Library…', click: () => openStudio(null) },
+      { label: 'Settings…', click: () => openSettings() },
       { label: 'About QuickShot', click: () => shell.openExternal('https://github.com') },
       { label: 'Quit QuickShot', click: () => app.quit() }
     ])
@@ -277,11 +416,13 @@ function refreshTray(): void {
 }
 
 function registerIpc(): void {
-  // Screenshot overlay finished selecting & cropping → open the editor.
+  // Screenshot overlay finished cropping → store in library, open Studio.
   ipcMain.handle('overlay:screenshot', (_e, croppedDataUrl: string) => {
-    pendingEditorImage = croppedDataUrl
     overlayWindow?.close()
-    openEditor()
+    const buf = Buffer.from(croppedDataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
+    const item = addImage(buf, Date.now())
+    broadcastLibraryChanged()
+    openStudio(item.id)
   })
 
   // Recording overlay returned a region (fractions) or null for full screen, plus mic choice.
@@ -296,40 +437,21 @@ function registerIpc(): void {
     overlayWindow?.close()
   })
 
-  ipcMain.handle('editor:get-image', () => pendingEditorImage)
-
-  ipcMain.handle('editor:copy', (_e, dataUrl: string) => {
-    clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
-    return true
-  })
-
-  ipcMain.handle('editor:save', async (_e, dataUrl: string) => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const { canceled, filePath } = await dialog.showSaveDialog({
-      title: 'Save screenshot',
-      defaultPath: join(app.getPath('pictures'), `QuickShot-${stamp}.png`),
-      filters: [{ name: 'PNG image', extensions: ['png'] }]
-    })
-    if (canceled || !filePath) return { saved: false }
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
-    await writeFile(filePath, Buffer.from(base64, 'base64'))
-    return { saved: true, filePath }
-  })
-
   // Recording lifecycle.
   ipcMain.on('recorder:started', () => {
     isRecording = true
     refreshTray()
   })
 
-  // Recording finished → stash the clip and open the review window (no save yet).
-  ipcMain.handle('recorder:ready', (_e, buffer: ArrayBuffer) => {
-    pendingVideoBuffer = buffer
+  // Recording finished → store in library, open Studio (review/play there).
+  ipcMain.handle('recorder:ready', (_e, buffer: ArrayBuffer, durationSec: number | null) => {
     recorderWindow?.close()
     recorderWindow = null
     isRecording = false
     refreshTray()
-    openVideoEditor()
+    const item = addVideo(Buffer.from(buffer), durationSec ?? null, Date.now())
+    broadcastLibraryChanged()
+    openStudio(item.id)
   })
 
   ipcMain.on('recorder:done', () => {
@@ -339,30 +461,109 @@ function registerIpc(): void {
     refreshTray()
   })
 
-  // Video review window.
-  ipcMain.handle('video:get', () => pendingVideoBuffer)
+  // ── Library / Studio ──────────────────────────────────────────────
+  ipcMain.handle('studio:current', () => currentStudioItem)
+  ipcMain.handle('library:list', () => listItems())
+  ipcMain.handle('library:item', (_e, id: string) => getItem(id) ?? null)
 
-  ipcMain.handle('video:save', async () => {
-    if (!pendingVideoBuffer) return { saved: false }
+  ipcMain.handle('library:image', (_e, id: string) => {
+    const buf = readMedia(id)
+    return buf ? `data:image/png;base64,${buf.toString('base64')}` : null
+  })
+
+  ipcMain.handle('library:video', (_e, id: string) => {
+    const buf = readMedia(id)
+    if (!buf) return null
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  })
+
+  ipcMain.handle('library:save-edits', (_e, id: string, dataUrl: string) => {
+    const buf = Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
+    updateImage(id, buf, Date.now())
+    broadcastLibraryChanged()
+    return true
+  })
+
+  ipcMain.handle('library:copy-image', (_e, dataUrl: string) => {
+    clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
+    return true
+  })
+
+  ipcMain.handle('library:export', async (_e, id: string, dataUrl: string | null) => {
+    const item = getItem(id)
+    if (!item) return { saved: false }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+
+    if (item.type === 'image') {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Export image',
+        defaultPath: join(app.getPath('pictures'), `QuickShot-${stamp}.png`),
+        filters: [{ name: 'PNG image', extensions: ['png'] }]
+      })
+      if (canceled || !filePath) return { saved: false }
+      const buf = dataUrl
+        ? Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
+        : readMedia(id)
+      if (!buf) return { saved: false }
+      await writeFile(filePath, buf)
+      return { saved: true, filePath }
+    }
+
     const { canceled, filePath } = await dialog.showSaveDialog({
-      title: 'Save recording',
+      title: 'Export recording',
       defaultPath: join(app.getPath('videos'), `QuickShot-${stamp}.webm`),
       filters: [{ name: 'WebM video', extensions: ['webm'] }]
     })
     if (canceled || !filePath) return { saved: false }
-    await writeFile(filePath, Buffer.from(pendingVideoBuffer))
+    const buf = readMedia(id)
+    if (!buf) return { saved: false }
+    await writeFile(filePath, buf)
     return { saved: true, filePath }
   })
 
-  ipcMain.on('video:discard', () => {
-    videoWindow?.close()
+  ipcMain.handle('library:delete', (_e, id: string) => {
+    deleteItem(id)
+    if (currentStudioItem === id) currentStudioItem = null
+    broadcastLibraryChanged()
+    return listItems()
+  })
+
+  // ── Floating launcher bar ──────────────────────────────────────────
+  ipcMain.on('float:capture', () => void openOverlay('screenshot'))
+  ipcMain.on('float:record', () => toggleRecording())
+  ipcMain.on('float:library', () => openStudio(null))
+  ipcMain.on('float:hide', () => applySettings(updateSettings({ floatBar: { enabled: false } })))
+  ipcMain.handle('float:get-state', () => ({ recording: isRecording, vertical: floatBarVertical }))
+  ipcMain.on('float:move', (_e, x: number, y: number) =>
+    floatBarWindow?.setPosition(Math.round(x), Math.round(y))
+  )
+  ipcMain.on('float:settings', () => openSettings())
+
+  // ── Settings ───────────────────────────────────────────────────────
+  ipcMain.handle('settings:get', () => getSettings())
+  ipcMain.handle('settings:update', (_e, patch: SettingsPatch) => {
+    const next = updateSettings(patch)
+    const failed = patch.shortcuts ? registerShortcuts(next.shortcuts) : []
+    // Apply float-bar changes (opacity/position/enabled) without double-registering.
+    if (patch.floatBar) {
+      if (next.floatBar.enabled) {
+        destroyFloatBar()
+        showFloatBar()
+      } else {
+        destroyFloatBar()
+      }
+    }
+    refreshTray()
+    return { settings: next, failed }
   })
 }
 
 app.whenReady().then(() => {
   // Menu-bar utility: no Dock icon, lives in the tray.
   if (process.platform === 'darwin') app.dock?.hide()
+
+  initLibrary()
+  initSettings()
 
   // Feed getDisplayMedia the target display (set when a recording starts), with
   // no picker dialog. Falls back to the display under the cursor.
@@ -371,8 +572,7 @@ app.whenReady().then(() => {
       desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
         const targetId =
           recordDisplayId ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
-        const source =
-          sources.find((s) => s.display_id === String(targetId)) ?? sources[0]
+        const source = sources.find((s) => s.display_id === String(targetId)) ?? sources[0]
         callback({ video: source })
       })
     },
@@ -381,18 +581,18 @@ app.whenReady().then(() => {
 
   registerIpc()
   buildTray()
-  globalShortcut.register(CAPTURE_SHORTCUT, () => openOverlay('screenshot'))
-  globalShortcut.register(CAPTURE_FULL_SHORTCUT, () => captureFullScreen())
-  globalShortcut.register(RECORD_SHORTCUT, () => toggleRecording())
+  const s = getSettings()
+  registerShortcuts(s.shortcuts)
+  if (s.floatBar.enabled) showFloatBar()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) openOverlay('screenshot')
+    if (BrowserWindow.getAllWindows().length === 0) openStudio(null)
   })
 })
 
 // Stay alive in the menu bar after windows close.
 app.on('window-all-closed', () => {
-  // intentionally no-op on all platforms; quit only via tray.
+  // intentionally no-op; quit only via tray.
 })
 
 app.on('will-quit', () => {

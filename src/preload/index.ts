@@ -14,28 +14,49 @@ export interface RegionFraction {
   fh: number
 }
 
+export type ItemType = 'image' | 'video'
+export interface LibraryItem {
+  id: string
+  type: ItemType
+  filename: string
+  title: string
+  width: number | null
+  height: number | null
+  duration: number | null
+  thumb: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface SaveResult {
+  saved: boolean
+  filePath?: string
+}
+
+export type FloatPosition = 'left-center' | 'right-center' | 'top-center' | 'bottom-center'
+export interface Settings {
+  floatBar: { enabled: boolean; opacity: number; position: FloatPosition }
+  shortcuts: { captureArea: string; captureFull: string; record: string }
+}
+export interface SettingsPatch {
+  floatBar?: Partial<Settings['floatBar']>
+  shortcuts?: Partial<Settings['shortcuts']>
+}
+
 const api = {
-  /** Overlay: receive the frozen screenshot to draw the selection on. */
+  // ── Capture overlay ──────────────────────────────────────────────
   onOverlaySource(cb: (src: OverlaySource) => void): () => void {
     const handler = (_e: IpcRendererEvent, src: OverlaySource): void => cb(src)
     ipcRenderer.on('overlay:source', handler)
     return () => ipcRenderer.removeListener('overlay:source', handler)
   },
-  /** Overlay (screenshot): send the cropped PNG; opens the editor. */
   completeScreenshot: (croppedDataUrl: string): Promise<void> =>
     ipcRenderer.invoke('overlay:screenshot', croppedDataUrl),
-  /** Overlay (record): send region (fractions) or null for full screen, plus mic choice. */
   completeRegion: (region: RegionFraction | null, mic: boolean): Promise<void> =>
     ipcRenderer.invoke('overlay:region', region, mic),
   cancelCapture: (): void => ipcRenderer.send('overlay:cancel'),
 
-  /** Editor: pull the image that was just captured. */
-  getEditorImage: (): Promise<string | null> => ipcRenderer.invoke('editor:get-image'),
-  copyImage: (dataUrl: string): Promise<boolean> => ipcRenderer.invoke('editor:copy', dataUrl),
-  saveImage: (dataUrl: string): Promise<{ saved: boolean; filePath?: string }> =>
-    ipcRenderer.invoke('editor:save', dataUrl),
-
-  /** Recorder: receive config (mic + optional crop region) when the bar opens. */
+  // ── Recorder control bar ─────────────────────────────────────────
   onRecorderConfig(
     cb: (cfg: { mic: boolean; region: RegionFraction | null }) => void
   ): () => void {
@@ -46,23 +67,59 @@ const api = {
     ipcRenderer.on('recorder:config', handler)
     return () => ipcRenderer.removeListener('recorder:config', handler)
   },
-  /** Recorder: main asks the bar to stop (hotkey / tray). */
   onRecorderStop(cb: () => void): () => void {
     const handler = (): void => cb()
     ipcRenderer.on('recorder:stop', handler)
     return () => ipcRenderer.removeListener('recorder:stop', handler)
   },
   recorderStarted: (): void => ipcRenderer.send('recorder:started'),
-  /** Recorder: hand the finished clip to the review window. */
-  recordingReady: (buffer: ArrayBuffer): Promise<void> =>
-    ipcRenderer.invoke('recorder:ready', buffer),
+  recordingReady: (buffer: ArrayBuffer, durationSec: number | null): Promise<void> =>
+    ipcRenderer.invoke('recorder:ready', buffer, durationSec),
   recorderDone: (): void => ipcRenderer.send('recorder:done'),
 
-  /** Video review: pull the recorded clip, save it, or discard. */
-  getVideoBuffer: (): Promise<ArrayBuffer | null> => ipcRenderer.invoke('video:get'),
-  saveVideo: (): Promise<{ saved: boolean; filePath?: string }> =>
-    ipcRenderer.invoke('video:save'),
-  discardVideo: (): void => ipcRenderer.send('video:discard')
+  // ── Studio / Library ─────────────────────────────────────────────
+  onStudioShowItem(cb: (id: string) => void): () => void {
+    const handler = (_e: IpcRendererEvent, id: string): void => cb(id)
+    ipcRenderer.on('studio:show-item', handler)
+    return () => ipcRenderer.removeListener('studio:show-item', handler)
+  },
+  onLibraryChanged(cb: () => void): () => void {
+    const handler = (): void => cb()
+    ipcRenderer.on('library:changed', handler)
+    return () => ipcRenderer.removeListener('library:changed', handler)
+  },
+  studioCurrent: (): Promise<string | null> => ipcRenderer.invoke('studio:current'),
+  libraryList: (): Promise<LibraryItem[]> => ipcRenderer.invoke('library:list'),
+  libraryItem: (id: string): Promise<LibraryItem | null> => ipcRenderer.invoke('library:item', id),
+  libraryImage: (id: string): Promise<string | null> => ipcRenderer.invoke('library:image', id),
+  libraryVideo: (id: string): Promise<ArrayBuffer | null> => ipcRenderer.invoke('library:video', id),
+  librarySaveEdits: (id: string, dataUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke('library:save-edits', id, dataUrl),
+  libraryCopyImage: (dataUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke('library:copy-image', dataUrl),
+  libraryExport: (id: string, dataUrl: string | null): Promise<SaveResult> =>
+    ipcRenderer.invoke('library:export', id, dataUrl),
+  libraryDelete: (id: string): Promise<LibraryItem[]> => ipcRenderer.invoke('library:delete', id),
+
+  // ── Floating launcher bar ────────────────────────────────────────
+  onFloatState(cb: (state: { recording: boolean }) => void): () => void {
+    const handler = (_e: IpcRendererEvent, state: { recording: boolean }): void => cb(state)
+    ipcRenderer.on('float:state', handler)
+    return () => ipcRenderer.removeListener('float:state', handler)
+  },
+  floatGetState: (): Promise<{ recording: boolean; vertical: boolean }> =>
+    ipcRenderer.invoke('float:get-state'),
+  floatCaptureImage: (): void => ipcRenderer.send('float:capture'),
+  floatRecord: (): void => ipcRenderer.send('float:record'),
+  floatOpenLibrary: (): void => ipcRenderer.send('float:library'),
+  floatHide: (): void => ipcRenderer.send('float:hide'),
+  floatMove: (x: number, y: number): void => ipcRenderer.send('float:move', x, y),
+  floatOpenSettings: (): void => ipcRenderer.send('float:settings'),
+
+  // ── Settings ─────────────────────────────────────────────────────
+  settingsGet: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
+  settingsUpdate: (patch: SettingsPatch): Promise<{ settings: Settings; failed: string[] }> =>
+    ipcRenderer.invoke('settings:update', patch)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Monitor, Circle, Mic, MicOff } from 'lucide-react'
 import type { OverlaySource } from '../../../preload'
 
 interface Rect {
@@ -142,18 +143,20 @@ export default function Overlay(): JSX.Element {
             <button
               onClick={() => setMic((m) => !m)}
               title={mic ? 'Microphone on' : 'Microphone off'}
-              className={`rounded-full px-3 py-1.5 text-sm ${
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm ${
                 mic ? 'bg-sky-500 text-white' : 'bg-white/10 text-zinc-300 hover:bg-white/20'
               }`}
             >
-              {mic ? '🎤 Mic on' : '🎙 Mic off'}
+              {mic ? <Mic size={15} /> : <MicOff size={15} />}
+              {mic ? 'Mic on' : 'Mic off'}
             </button>
           )}
           <button
             onClick={fullScreen}
-            className="rounded-full bg-sky-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-sky-400"
+            className="flex items-center gap-1.5 rounded-full bg-sky-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-sky-400"
           >
-            {source.purpose === 'record' ? '⏺ Record full screen' : '⛶ Capture full screen'}
+            {source.purpose === 'record' ? <Circle size={15} /> : <Monitor size={15} />}
+            {source.purpose === 'record' ? 'Record full screen' : 'Capture full screen'}
           </button>
           <button
             onClick={() => window.api.cancelCapture()}

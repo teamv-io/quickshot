@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Mic, Pause, Play, Square, TriangleAlert } from 'lucide-react'
 import type { RegionFraction } from '../../../preload'
 
 type Phase = 'starting' | 'recording' | 'paused' | 'saving' | 'error'
@@ -26,6 +27,7 @@ export default function Recorder(): JSX.Element {
   const timerRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const secondsRef = useRef(0)
 
   // Keep latest phase available to async callbacks.
   const phaseRef = useRef<Phase>('starting')
@@ -33,7 +35,10 @@ export default function Recorder(): JSX.Element {
 
   function tickStart(): void {
     if (timerRef.current != null) return
-    timerRef.current = window.setInterval(() => setSeconds((s) => s + 1), 1000)
+    timerRef.current = window.setInterval(() => {
+      secondsRef.current += 1
+      setSeconds(secondsRef.current)
+    }, 1000)
   }
   function tickStop(): void {
     if (timerRef.current != null) {
@@ -130,8 +135,8 @@ export default function Recorder(): JSX.Element {
     const blob = new Blob(chunksRef.current, { type: 'video/webm' })
     const buf = await blob.arrayBuffer()
     streamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()))
-    // Hand off to the review window; main closes this bar.
-    await window.api.recordingReady(buf)
+    // Hand off to the library + Studio; main closes this bar.
+    await window.api.recordingReady(buf, secondsRef.current)
   }
 
   function stop(): void {
@@ -172,7 +177,9 @@ export default function Recorder(): JSX.Element {
       <div className="flex h-12 items-center gap-3 rounded-full bg-zinc-900/95 px-4 text-zinc-100 shadow-xl ring-1 ring-white/10">
         {phase === 'error' ? (
           <>
-            <span className="text-xs text-red-400">⚠ {error ?? 'Recording failed'}</span>
+            <span className="flex items-center gap-1 text-xs text-red-400">
+              <TriangleAlert size={14} /> {error ?? 'Recording failed'}
+            </span>
             <button
               onClick={() => window.api.recorderDone()}
               className="rounded-full bg-white/10 px-3 py-1 text-xs hover:bg-white/20"
@@ -188,7 +195,7 @@ export default function Recorder(): JSX.Element {
               className={`h-3 w-3 rounded-full bg-red-500 ${recording ? 'animate-pulse' : 'opacity-50'}`}
             />
             <span className="w-14 text-center font-mono text-sm tabular-nums">{fmt(seconds)}</span>
-            {hasMic && <span title="Microphone on">🎤</span>}
+            {hasMic && <Mic size={16} className="text-zinc-300" />}
 
             <button
               onClick={togglePause}
@@ -196,7 +203,7 @@ export default function Recorder(): JSX.Element {
               title={phase === 'paused' ? 'Resume' : 'Pause'}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-40"
             >
-              {phase === 'paused' ? '▶' : '❚❚'}
+              {phase === 'paused' ? <Play size={15} fill="currentColor" /> : <Pause size={15} fill="currentColor" />}
             </button>
             <button
               onClick={stop}
@@ -204,7 +211,7 @@ export default function Recorder(): JSX.Element {
               title="Stop & save"
               className="flex h-8 items-center gap-1.5 rounded-full bg-red-500 px-3 text-sm font-medium hover:bg-red-400 disabled:opacity-40"
             >
-              <span className="h-2.5 w-2.5 rounded-[2px] bg-white" /> Stop
+              <Square size={12} fill="currentColor" /> Stop
             </button>
           </>
         )}
