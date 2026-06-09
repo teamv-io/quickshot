@@ -4,6 +4,7 @@ import type { LibraryItem } from '../../../preload'
 import Filmstrip from './Filmstrip'
 import ImageView from './ImageView'
 import VideoView from './VideoView'
+import { prettyAccelerator } from '../../../shared/shortcut'
 
 /**
  * The QuickShot "Studio": a Snagit-style window with a filmstrip of every
@@ -94,7 +95,7 @@ export default function Studio(): JSX.Element {
           <VideoView key={current.id} item={current} />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-500">
-            No captures yet. Press ⌘⇧2 to capture an area, ⌘⇧1 for full screen, or ⌘⇧R to record.
+            No captures yet. Press {prettyAccelerator('CommandOrControl+Shift+2')} to capture an area, {prettyAccelerator('CommandOrControl+Shift+1')} for full screen, or {prettyAccelerator('CommandOrControl+Shift+R')} to record.
           </div>
         )}
       </div>

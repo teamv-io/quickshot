@@ -16,7 +16,8 @@ import {
   shell
 } from 'electron'
 import { is } from '@electron-toolkit/utils'
-import { captureActiveDisplay } from './capture'
+import { captureActiveDisplay, captureAllDisplays } from './capture'
+import { Monitor as NativeMonitor } from 'node-screenshots'
 import {
   initLibrary,
   listItems,
@@ -42,6 +43,23 @@ import {
   type SettingsPatch,
   type FloatPosition
 } from './settings'
+import { prettyAccelerator } from '../shared/shortcut'
+import appIconPath from '../../build/icon.png?asset'
+import trayMacIcon from '../../build/tray.png?asset'
+import trayMacIcon2x from '../../build/tray@2x.png?asset'
+import trayWinIcon from '../../build/tray-win.png?asset'
+
+const SHORTCUT_PLATFORM = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'
+
+function capturePermissionHint(): string {
+  if (process.platform === 'darwin') {
+    return 'On macOS, grant Screen Recording permission in System Settings ▸ Privacy & Security, then relaunch.'
+  }
+  if (process.platform === 'win32') {
+    return 'On Windows, allow QuickShot through any third-party screen-capture blockers and try again.'
+  }
+  return 'Check screen-capture permissions for QuickShot, then try again.'
+}
 
 type OverlayPurpose = 'screenshot' | 'record'
 interface RegionFraction {
@@ -57,7 +75,10 @@ interface RecordOptions {
 }
 
 let tray: Tray | null = null
-let overlayWindow: BrowserWindow | null = null
+/** One overlay BrowserWindow per connected display. */
+let overlayWindows: BrowserWindow[] = []
+/** Maps each overlay window → the Electron display.id it covers. */
+const overlayDisplayMap = new WeakMap<BrowserWindow, number>()
 let studioWindow: BrowserWindow | null = null
 let recorderWindow: BrowserWindow | null = null
 let floatBarWindow: BrowserWindow | null = null
@@ -68,13 +89,60 @@ let isRecording = false
 /** Item the Studio window should focus when it (re)opens. */
 let currentStudioItem: string | null = null
 
-/** Display the region overlay lives on (used to target recordings). */
-let overlayDisplayId: number | null = null
-
 /** Target display/region/options for the next recording. */
 let recordDisplayId: number | null = null
 let recordRegion: RegionFraction | null = null
 let recordOptions: RecordOptions = { mic: false, systemAudio: false, webcam: false }
+
+/** True while the native (node-screenshots) frame loop is feeding the recorder. */
+let nativeRecording = false
+
+/**
+ * Push JPEG-encoded frames of `displayId` to the recorder renderer via IPC at
+ * roughly `fps`. Each call to node-screenshots' `captureImage()` uses the
+ * native OS path (Windows Graphics Capture / Desktop Duplication / CGImage),
+ * so we never touch Chromium's DXGI duplicator — that's the whole point of
+ * this loop. JPEG quality 70 keeps each frame around 100 KB at 1080p, which
+ * the IPC transport (Buffer fast-path) handles cleanly at 30 fps.
+ */
+async function runNativeRecord(
+  displayId: number,
+  fps: number,
+  sender: Electron.WebContents
+): Promise<void> {
+  const display = screen.getAllDisplays().find((d) => d.id === displayId)
+  if (!display) {
+    nativeRecording = false
+    return
+  }
+  // Match the Electron display to a node-screenshots Monitor by logical
+  // top-left (positions are unique per monitor in screen-space).
+  const monitor = NativeMonitor.all().find((m) => {
+    const ms = m.scaleFactor() || 1
+    return (
+      Math.round(m.x() / ms) === display.bounds.x && Math.round(m.y() / ms) === display.bounds.y
+    )
+  })
+  if (!monitor) {
+    nativeRecording = false
+    return
+  }
+
+  const interval = Math.max(15, Math.round(1000 / Math.max(1, fps)))
+  while (nativeRecording && !sender.isDestroyed()) {
+    const t0 = Date.now()
+    try {
+      const img = await monitor.captureImage()
+      const jpg = await img.toJpeg()
+      if (!nativeRecording || sender.isDestroyed()) break
+      sender.send('native-record:frame', jpg)
+    } catch (err) {
+      console.warn('[native-record] frame failed:', (err as Error).message)
+    }
+    const elapsed = Date.now() - t0
+    if (elapsed < interval) await new Promise((r) => setTimeout(r, interval - elapsed))
+  }
+}
 
 const preload = join(__dirname, '../preload/index.js')
 
@@ -108,6 +176,8 @@ function openStudio(itemId: string | null): void {
     minHeight: 560,
     title: 'QuickShot by TeamV',
     backgroundColor: '#1e1e22',
+    autoHideMenuBar: true,
+    icon: appIconPath,
     show: false,
     webPreferences: { preload, sandbox: false }
   })
@@ -118,61 +188,89 @@ function openStudio(itemId: string | null): void {
   })
 }
 
-/** Open the full-screen region selector, for either a screenshot or a recording. */
+/** Close every overlay window in one shot — called when any one commits or cancels. */
+function closeAllOverlays(): void {
+  const wins = overlayWindows
+  overlayWindows = []
+  for (const w of wins) {
+    if (!w.isDestroyed()) w.close()
+  }
+}
+
+/**
+ * Open the region selector. With more than one connected display we open ONE
+ * overlay per screen — each frozen at its own screenshot — so the user can
+ * drag, hover-snap, or click "full screen" on whichever display the cursor
+ * happens to land on. The first overlay to commit (or cancel) closes the rest.
+ */
 async function openOverlay(purpose: OverlayPurpose): Promise<void> {
-  if (overlayWindow) return
+  if (overlayWindows.length > 0) return
   try {
     floatBarWindow?.hide() // keep the launcher clear of the selection
-    const cursor = screen.getCursorScreenPoint()
-    const display = screen.getDisplayNearestPoint(cursor)
-    const { dataUrl, bounds, scaleFactor } = await captureActiveDisplay()
-    overlayDisplayId = display.id
+    const slices = await captureAllDisplays()
+    // Remember the display the cursor was on when capture was triggered, so
+    // the action bar only renders on that overlay initially. Hover events
+    // hand the bar off as the user moves between displays.
+    const cursorDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
 
-    overlayWindow = new BrowserWindow({
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-      frame: false,
-      transparent: false,
-      backgroundColor: '#000000',
-      resizable: false,
-      movable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: true,
-      enableLargerThanScreen: true,
-      skipTaskbar: true,
-      hasShadow: false,
-      alwaysOnTop: true,
-      webPreferences: { preload, sandbox: false }
-    })
+    for (const slice of slices) {
+      const win = new BrowserWindow({
+        x: slice.bounds.x,
+        y: slice.bounds.y,
+        width: slice.bounds.width,
+        height: slice.bounds.height,
+        frame: false,
+        transparent: false,
+        backgroundColor: '#000000',
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: true,
+        enableLargerThanScreen: true,
+        skipTaskbar: true,
+        hasShadow: false,
+        alwaysOnTop: true,
+        webPreferences: { preload, sandbox: false }
+      })
 
-    // Cover the whole display including the macOS menu bar & Dock.
-    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    if (process.platform === 'darwin') {
-      overlayWindow.setSimpleFullScreen(true)
+      overlayDisplayMap.set(win, slice.displayId)
+      overlayWindows.push(win)
+
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      if (process.platform === 'darwin') win.setSimpleFullScreen(true)
+      win.setBounds({
+        x: slice.bounds.x,
+        y: slice.bounds.y,
+        width: slice.bounds.width,
+        height: slice.bounds.height
+      })
+      // 'screen-saver' level draws above the system menu bar.
+      win.setAlwaysOnTop(true, 'screen-saver')
+      loadRoute(win, 'overlay')
+
+      win.webContents.once('did-finish-load', () => {
+        if (win.isDestroyed()) return
+        win.webContents.send('overlay:source', {
+          dataUrl: slice.dataUrl,
+          bounds: slice.bounds,
+          scaleFactor: slice.scaleFactor,
+          purpose,
+          isActive: slice.displayId === cursorDisplayId
+        })
+      })
+
+      win.on('closed', () => {
+        overlayWindows = overlayWindows.filter((w) => w !== win)
+        if (overlayWindows.length === 0 && getSettings().floatBar.enabled) {
+          floatBarWindow?.showInactive()
+        }
+      })
     }
-    overlayWindow.setBounds({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height })
-    // 'screen-saver' level draws above the system menu bar.
-    overlayWindow.setAlwaysOnTop(true, 'screen-saver')
-    loadRoute(overlayWindow, 'overlay')
-
-    overlayWindow.webContents.once('did-finish-load', () => {
-      overlayWindow?.webContents.send('overlay:source', { dataUrl, bounds, scaleFactor, purpose })
-    })
-    overlayWindow.on('closed', () => {
-      overlayWindow = null
-      if (getSettings().floatBar.enabled) floatBarWindow?.showInactive()
-    })
   } catch (err) {
-    overlayWindow?.close()
-    overlayWindow = null
+    closeAllOverlays()
     if (getSettings().floatBar.enabled) floatBarWindow?.showInactive()
-    dialog.showErrorBox(
-      'Capture failed',
-      `${(err as Error).message}\n\nOn macOS, grant Screen Recording permission in System Settings ▸ Privacy & Security, then relaunch.`
-    )
+    dialog.showErrorBox('Capture failed', `${(err as Error).message}\n\n${capturePermissionHint()}`)
   }
 }
 
@@ -185,10 +283,7 @@ async function captureFullScreen(): Promise<void> {
     broadcastLibraryChanged()
     openStudio(item.id)
   } catch (err) {
-    dialog.showErrorBox(
-      'Capture failed',
-      `${(err as Error).message}\n\nOn macOS, grant Screen Recording permission in System Settings ▸ Privacy & Security, then relaunch.`
-    )
+    dialog.showErrorBox('Capture failed', `${(err as Error).message}\n\n${capturePermissionHint()}`)
   }
 }
 
@@ -229,7 +324,11 @@ function openRecorderBar(): void {
   loadRoute(recorderWindow, 'recorder')
 
   recorderWindow.webContents.once('did-finish-load', () => {
-    recorderWindow?.webContents.send('recorder:config', { ...recordOptions, region: recordRegion })
+    recorderWindow?.webContents.send('recorder:config', {
+      ...recordOptions,
+      region: recordRegion,
+      displayId: recordDisplayId
+    })
   })
   recorderWindow.on('closed', () => {
     recorderWindow = null
@@ -351,6 +450,19 @@ function registerShortcuts(sc: Settings['shortcuts']): string[] {
   bind(sc.captureArea, () => openOverlay('screenshot'))
   bind(sc.captureFull, () => captureFullScreen())
   bind(sc.record, () => toggleRecording())
+
+  // Secondary Windows/Linux trigger: PrintScreen → capture selected area.
+  // Apple keyboards have no PrtSc key, and macOS doesn't surface it through
+  // globalShortcut, so we skip it on darwin. Failures (e.g. another app holds
+  // the key) are swallowed silently — the user didn't configure this binding.
+  if (process.platform !== 'darwin' && sc.captureArea !== 'PrintScreen') {
+    try {
+      globalShortcut.register('PrintScreen', () => openOverlay('screenshot'))
+    } catch {
+      /* ignore — secondary binding is best-effort */
+    }
+  }
+
   return failed
 }
 
@@ -402,6 +514,8 @@ function openSettings(): void {
     resizable: false,
     title: 'QuickShot by TeamV — Settings',
     backgroundColor: '#1e1e22',
+    autoHideMenuBar: true,
+    icon: appIconPath,
     show: false,
     webPreferences: { preload, sandbox: false }
   })
@@ -413,13 +527,21 @@ function openSettings(): void {
 }
 
 function buildTray(): void {
-  // Camera-aperture ring template icon (alpha mask; macOS tints it to the menu bar).
-  const icon = nativeImage
-    .createFromDataURL(
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAYElEQVR4nO2UwQ0AIAgD3X9pnYAItErQXsLL0B4fxxCiKdOYktIrMtFyqkS2nCKBlkMSmUCqBBLSX4BxAZThWY6+S+A9geMZf/8DVsguLLOTlogMRGk5KkGltNwrI0Q/FoRHEvzZ3FPdAAAAAElFTkSuQmCC'
-    )
-    .resize({ width: 18, height: 18 })
-  icon.setTemplateImage(true)
+  // macOS menubar uses a monochrome template (alpha mask, tinted by the OS to
+  // match light/dark menu bar). Windows notification area shows the colored
+  // brand mark — there's no tinting, so a flat color icon reads better.
+  let icon: Electron.NativeImage
+  if (process.platform === 'darwin') {
+    icon = nativeImage.createFromPath(trayMacIcon)
+    // Attach the @2x representation so the icon stays crisp on Retina displays.
+    const retina = nativeImage.createFromPath(trayMacIcon2x)
+    if (!retina.isEmpty()) {
+      icon.addRepresentation({ scaleFactor: 2, buffer: retina.toPNG() })
+    }
+    icon.setTemplateImage(true)
+  } else {
+    icon = nativeImage.createFromPath(trayWinIcon)
+  }
   tray = new Tray(icon)
   tray.setToolTip('QuickShot by TeamV')
   refreshTray()
@@ -429,18 +551,19 @@ function refreshTray(): void {
   floatBarWindow?.webContents.send('float:state', { recording: isRecording })
   if (!tray) return
   const sc = getSettings().shortcuts
+  const pretty = (a: string): string => prettyAccelerator(a, SHORTCUT_PLATFORM)
   const recordItems: Electron.MenuItemConstructorOptions[] = isRecording
-    ? [{ label: `■ Stop recording  (${sc.record})`, click: () => stopRecording() }]
-    : [{ label: `Record…  (${sc.record})`, click: () => void openOverlay('record') }]
+    ? [{ label: `■ Stop recording  (${pretty(sc.record)})`, click: () => stopRecording() }]
+    : [{ label: `Record…  (${pretty(sc.record)})`, click: () => void openOverlay('record') }]
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: `Capture selected area…  (${sc.captureArea})`,
+        label: `Capture selected area…  (${pretty(sc.captureArea)})`,
         enabled: !isRecording,
         click: () => openOverlay('screenshot')
       },
       {
-        label: `Capture full screen  (${sc.captureFull})`,
+        label: `Capture full screen  (${pretty(sc.captureFull)})`,
         enabled: !isRecording,
         click: () => captureFullScreen()
       },
@@ -465,7 +588,7 @@ function refreshTray(): void {
 function registerIpc(): void {
   // Screenshot overlay finished cropping → store in library, open Studio.
   ipcMain.handle('overlay:screenshot', (_e, croppedDataUrl: string) => {
-    overlayWindow?.close()
+    closeAllOverlays()
     const buf = Buffer.from(croppedDataUrl.replace(/^data:image\/png;base64,/, ''), 'base64')
     const item = addImage(buf, Date.now())
     broadcastLibraryChanged()
@@ -473,16 +596,19 @@ function registerIpc(): void {
   })
 
   // Recording overlay returned a region (or null = full screen) + capture options.
-  ipcMain.handle('overlay:region', (_e, region: RegionFraction | null, opts: RecordOptions) => {
+  ipcMain.handle('overlay:region', (e, region: RegionFraction | null, opts: RecordOptions) => {
+    // Target the display whose overlay sent this region (not the cursor's
+    // current display — the user may have drawn on the external screen).
+    const senderWin = BrowserWindow.fromWebContents(e.sender)
+    recordDisplayId = senderWin ? overlayDisplayMap.get(senderWin) ?? null : null
     recordRegion = region
-    recordDisplayId = overlayDisplayId
     recordOptions = opts
-    overlayWindow?.close()
+    closeAllOverlays()
     openRecorderBar()
   })
 
   ipcMain.on('overlay:cancel', () => {
-    overlayWindow?.close()
+    closeAllOverlays()
   })
 
   // Recording lifecycle.
@@ -507,6 +633,20 @@ function registerIpc(): void {
     recorderWindow = null
     isRecording = false
     refreshTray()
+  })
+
+  // ── Native screen-capture stream (bypass Chromium's broken DXGI) ──
+  // The renderer subscribes to a per-frame JPEG stream we drive from
+  // node-screenshots. It draws the frames onto a canvas and feeds
+  // canvas.captureStream() into MediaRecorder, sidestepping getDisplayMedia
+  // entirely on Windows displays Chromium can't capture.
+  ipcMain.on('native-record:start', (e, displayId: number, fps: number) => {
+    if (nativeRecording) return
+    nativeRecording = true
+    void runNativeRecord(displayId, fps, e.sender)
+  })
+  ipcMain.on('native-record:stop', () => {
+    nativeRecording = false
   })
 
   // ── Library / Studio ──────────────────────────────────────────────
@@ -714,6 +854,11 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   // Menu-bar utility: no Dock icon, lives in the tray.
   if (process.platform === 'darwin') app.dock?.hide()
+
+  // Hide Electron's default top menu (File / Edit / View / Window / Help) on
+  // Windows + Linux — this is a tray-driven utility, so the chrome looks more
+  // polished without it. macOS still needs the application menu strip.
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   initLibrary()
   initSettings()

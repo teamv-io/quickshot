@@ -3,7 +3,62 @@ import { Mic, Volume2, Video, Pause, Play, Square, TriangleAlert } from 'lucide-
 import type { RegionFraction, RecordOptions } from '../../../preload'
 
 type Phase = 'starting' | 'recording' | 'paused' | 'saving' | 'error'
-type Config = RecordOptions & { region: RegionFraction | null }
+type Config = RecordOptions & { region: RegionFraction | null; displayId: number | null }
+
+/** Build a MediaStream from native-screenshots JPEG frames driven by the main
+ *  process. The renderer maintains a backing canvas that's painted whenever a
+ *  new frame arrives; `canvas.captureStream(fps)` exposes it as a real video
+ *  track that MediaRecorder can encode, without ever going through Chromium's
+ *  getDisplayMedia (which is what fails on the broken-DXGI laptop display). */
+function startNativeDisplayStream(displayId: number, fps = 30): {
+  stream: MediaStream
+  stop: () => void
+} {
+  // Use a generously-sized backing canvas; the first frame resizes it to the
+  // captured display's real resolution. drawImage scales the JPEG into this.
+  const canvas = document.createElement('canvas')
+  canvas.width = 1920
+  canvas.height = 1080
+  const ctx = canvas.getContext('2d', { willReadFrequently: false })!
+  let stopped = false
+  let url: string | null = null
+
+  const off = window.api.onNativeRecordFrame((jpg) => {
+    if (stopped) return
+    const blob = new Blob([new Uint8Array(jpg)], { type: 'image/jpeg' })
+    const next = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = (): void => {
+      if (stopped) {
+        URL.revokeObjectURL(next)
+        return
+      }
+      if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+      }
+      ctx.drawImage(img, 0, 0)
+      if (url) URL.revokeObjectURL(url)
+      url = next
+    }
+    img.onerror = (): void => URL.revokeObjectURL(next)
+    img.src = next
+  })
+
+  window.api.nativeRecordStart(displayId, fps)
+  const stream = canvas.captureStream(fps)
+
+  return {
+    stream,
+    stop: (): void => {
+      stopped = true
+      window.api.nativeRecordStop()
+      off()
+      if (url) URL.revokeObjectURL(url)
+      stream.getTracks().forEach((t) => t.stop())
+    }
+  }
+}
 
 function fmt(total: number): string {
   const m = Math.floor(total / 60)
@@ -30,6 +85,7 @@ export default function Recorder(): JSX.Element {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const timerRef = useRef<number | null>(null)
   const rafRef = useRef<number | null>(null)
+  const nativeStopRef = useRef<(() => void) | null>(null)
   const secondsRef = useRef(0)
 
   function tickStart(): void {
@@ -117,10 +173,13 @@ export default function Recorder(): JSX.Element {
 
   async function start(cfg: Config): Promise<void> {
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: cfg.systemAudio
-      })
+      // Native video path: poll node-screenshots in main and render frames to
+      // a canvas-backed MediaStream. Avoids Chromium's getDisplayMedia / DXGI
+      // duplicator, which fails on the laptop display's 24-bit color format.
+      if (cfg.displayId == null) throw new Error('No display selected for recording.')
+      const native = startNativeDisplayStream(cfg.displayId, 30)
+      nativeStopRef.current = native.stop
+      const display = native.stream
       streamsRef.current.push(display)
 
       let cam: HTMLVideoElement | null = null
@@ -139,8 +198,21 @@ export default function Recorder(): JSX.Element {
       const videoStream = await buildVideoStream(display, cfg.region, cam)
       const videoTrack = videoStream.getVideoTracks()[0]
 
-      // Audio: system (from the display stream) + mic.
-      const sysTracks = cfg.systemAudio ? display.getAudioTracks() : []
+      // System-audio: getDisplayMedia is the only Chromium path that exposes
+      // WASAPI loopback. We request video+audio but discard the video track —
+      // even if the display capture itself is degraded, the audio side often
+      // still works. If it fails entirely, just record without system audio.
+      let sysTracks: MediaStreamTrack[] = []
+      if (cfg.systemAudio) {
+        try {
+          const sys = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+          streamsRef.current.push(sys)
+          sys.getVideoTracks().forEach((t) => t.stop())
+          sysTracks = sys.getAudioTracks()
+        } catch {
+          /* system audio unavailable */
+        }
+      }
       let micTracks: MediaStreamTrack[] = []
       let hasMic = false
       if (cfg.mic) {
@@ -157,7 +229,8 @@ export default function Recorder(): JSX.Element {
 
       setActive({ mic: hasMic, systemAudio: sysTracks.length > 0, webcam: hasWebcam })
 
-      // Stop if the user ends sharing via the OS.
+      // Canvas captureStream tracks rarely end on their own, but keep the
+      // listener for defensive parity with the old getDisplayMedia flow.
       display.getVideoTracks()[0].addEventListener('ended', () => stop())
 
       const combined = new MediaStream([videoTrack, ...audioTracks])
@@ -188,6 +261,8 @@ export default function Recorder(): JSX.Element {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     elsRef.current.forEach((el) => el.pause())
     audioCtxRef.current?.close().catch(() => {})
+    nativeStopRef.current?.()
+    nativeStopRef.current = null
     const blob = new Blob(chunksRef.current, { type: 'video/webm' })
     const buf = await blob.arrayBuffer()
     streamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()))

@@ -36,12 +36,12 @@ export default function FloatBar(): JSX.Element {
   }
 
   const iconBtn =
-    'flex h-10 w-10 items-center justify-center rounded-xl text-zinc-200 transition hover:bg-white/10'
+    'flex h-10 w-10 items-center justify-center rounded-md text-zinc-200 transition hover:bg-white/10'
 
   return (
     <div className="flex h-full w-full items-center justify-center">
       <div
-        className={`flex items-center gap-1 rounded-2xl bg-zinc-900 p-1.5 shadow-2xl ring-1 ring-white/10 ${
+        className={`flex items-center gap-1 rounded-lg bg-zinc-900 p-1.5 ring-1 ring-white/10 ${
           vertical ? 'flex-col' : 'flex-row'
         }`}
       >

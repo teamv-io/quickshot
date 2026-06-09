@@ -15,9 +15,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:win": "electron-vite build && electron-builder --win",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "icons": "node build/generate-icons.mjs",
+    "build:mac": "electron-vite build && electron-builder --mac --arm64",
+    "build:win": "electron-vite build && electron-builder --win"
   },
   "build": {
     "appId": "io.teamv.quickshot",
@@ -32,12 +32,19 @@
     ],
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**",
-      "**/node_modules/ffmpeg-static/**"
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/node-screenshots/**",
+      "**/node_modules/@nashaofu/**"
     ],
     "afterSign": "build/notarize.cjs",
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
@@ -60,13 +67,6 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
     },
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "category": "Utility",
-      "artifactName": "QuickShot-by-TeamV-${version}-${arch}.${ext}"
-    },
     "publish": {
       "provider": "github",
       "owner": "teamv-io",
@@ -79,7 +79,9 @@
     "electron-updater": "^6.8.9",
     "fabric": "^6.5.4",
     "ffmpeg-static": "^5.3.0",
-    "lucide-react": "^0.460.0"
+    "lucide-react": "^0.460.0",
+    "node-screenshots": "^0.2.8",
+    "node-window-manager": "^2.2.4"
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
@@ -96,9 +98,11 @@
     "electron-vite": "^2.3.0",
     "eslint": "^9.39.4",
     "globals": "^15.15.0",
+    "png-to-ico": "^2.1.8",
     "prettier": "^3.8.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "^0.33.5",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.60.1",

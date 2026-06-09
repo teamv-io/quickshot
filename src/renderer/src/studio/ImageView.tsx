@@ -23,6 +23,7 @@ import {
 import type { LibraryItem } from '../../../preload'
 import { FabricEditor, type Tool } from '../editor/FabricEditor'
 import { composePretty, DEFAULT_PRETTY, BACKGROUNDS, type PrettyOptions } from './pretty'
+import { prettyAccelerator } from '../../../shared/shortcut'
 
 const TOOLS: { id: Tool; label: string; Icon: LucideIcon }[] = [
   { id: 'select', label: 'Select / Move', Icon: MousePointer2 },
@@ -196,10 +197,20 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
 
         <div className="mx-1 h-6 w-px bg-white/10" />
 
-        <button className={btn(false)} title="Undo (⌘Z)" disabled={!ed?.canUndo()} onClick={() => ed?.undo()}>
+        <button
+          className={btn(false)}
+          title={`Undo (${prettyAccelerator('CommandOrControl+Z')})`}
+          disabled={!ed?.canUndo()}
+          onClick={() => ed?.undo()}
+        >
           <Undo2 size={17} />
         </button>
-        <button className={btn(false)} title="Redo (⇧⌘Z)" disabled={!ed?.canRedo()} onClick={() => ed?.redo()}>
+        <button
+          className={btn(false)}
+          title={`Redo (${prettyAccelerator('CommandOrControl+Shift+Z')})`}
+          disabled={!ed?.canRedo()}
+          onClick={() => ed?.redo()}
+        >
           <Redo2 size={17} />
         </button>
         <button className={btn(false)} title="Delete selected (⌫)" onClick={() => ed?.deleteSelected()}>
@@ -220,7 +231,11 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
           <button className={txtBtn} onClick={copy}>
             <CopyIcon size={15} /> Copy
           </button>
-          <button className={txtBtn} onClick={saveToLibrary} title="Save edits back into the library (⌘S)">
+          <button
+            className={txtBtn}
+            onClick={saveToLibrary}
+            title={`Save edits back into the library (${prettyAccelerator('CommandOrControl+S')})`}
+          >
             <SaveIcon size={15} /> Save
           </button>
           <button

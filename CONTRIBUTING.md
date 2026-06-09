@@ -34,7 +34,7 @@ Put non-trivial pure logic in `src/shared` so it can be unit-tested without Elec
 ## Releases
 
 Maintainers cut releases by pushing a `v*` tag (e.g. `npm version minor && git push --follow-tags`).
-GitHub Actions then builds and publishes installers for **macOS (arm64 + Intel), Windows, and Linux**.
+GitHub Actions then builds and publishes installers for **macOS (Apple Silicon / arm64) and Windows**.
 
 ### Code signing & notarization (optional)
 

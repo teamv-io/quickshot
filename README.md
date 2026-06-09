@@ -1,6 +1,6 @@
 # QuickShot by TeamV
 
-Open-source screenshot, annotation, and screen recording — a free alternative to ShareX / CleanShot / Flameshot. Built with Electron so one codebase ships to **macOS, Windows, and Linux**.
+Open-source screenshot, annotation, and screen recording — a free alternative to ShareX / CleanShot / Flameshot. Built with Electron, currently shipping to **macOS (Apple Silicon) and Windows**.
 
 > Status: active development. Screenshots, annotation, recording, and a Snagit-style library all work.
 
@@ -65,7 +65,7 @@ npm run format      # prettier
 ## Build & release
 
 ```bash
-npm run build:mac   # or build:win / build:linux  → installers in release/
+npm run build:mac   # or build:win  → installers in release/
 ```
 
 Releases are automated: **push a `v*` tag** and GitHub Actions builds the macOS `.dmg` and Windows installer and attaches them to a GitHub Release.

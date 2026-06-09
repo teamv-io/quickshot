@@ -14,12 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest # Apple Silicon (arm64)
-            target: '--mac'
+          - os: macos-latest # Apple Silicon (arm64) only
+            target: '--mac --arm64'
           - os: windows-latest
             target: '--win'
-          - os: ubuntu-latest
-            target: '--linux'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

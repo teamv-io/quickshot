@@ -8,6 +8,8 @@ export interface OverlaySource {
   bounds: { x: number; y: number; width: number; height: number }
   scaleFactor: number
   purpose: 'screenshot' | 'record'
+  /** True if the cursor was on this display at the moment the overlay opened. */
+  isActive: boolean
 }
 
 export interface RegionFraction {
@@ -58,15 +60,23 @@ const api = {
 
   // ── Recorder control bar ─────────────────────────────────────────
   onRecorderConfig(
-    cb: (cfg: RecordOptions & { region: RegionFraction | null }) => void
+    cb: (cfg: RecordOptions & { region: RegionFraction | null; displayId: number | null }) => void
   ): () => void {
     const handler = (
       _e: IpcRendererEvent,
-      cfg: RecordOptions & { region: RegionFraction | null }
+      cfg: RecordOptions & { region: RegionFraction | null; displayId: number | null }
     ): void => cb(cfg)
     ipcRenderer.on('recorder:config', handler)
     return () => ipcRenderer.removeListener('recorder:config', handler)
   },
+  onNativeRecordFrame(cb: (jpegBytes: Buffer) => void): () => void {
+    const handler = (_e: IpcRendererEvent, jpg: Buffer): void => cb(jpg)
+    ipcRenderer.on('native-record:frame', handler)
+    return () => ipcRenderer.removeListener('native-record:frame', handler)
+  },
+  nativeRecordStart: (displayId: number, fps: number): void =>
+    ipcRenderer.send('native-record:start', displayId, fps),
+  nativeRecordStop: (): void => ipcRenderer.send('native-record:stop'),
   onRecorderStop(cb: () => void): () => void {
     const handler = (): void => cb()
     ipcRenderer.on('recorder:stop', handler)

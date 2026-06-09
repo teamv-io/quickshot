@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded-square brand tile -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)" />
+
+  <!-- Capture-frame brackets: the universal "select region" mark -->
+  <g fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 256 400 L 256 256 L 400 256" />
+    <path d="M 624 256 L 768 256 L 768 400" />
+    <path d="M 768 624 L 768 768 L 624 768" />
+    <path d="M 400 768 L 256 768 L 256 624" />
+  </g>
+
+  <!-- Shutter dot in the center -->
+  <circle cx="512" cy="512" r="96" fill="#ffffff" />
+</svg>

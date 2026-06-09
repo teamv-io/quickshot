@@ -34,7 +34,7 @@ export default function Settings(): JSX.Element {
   const fb = settings.floatBar
 
   return (
-    <div className="h-full overflow-y-auto bg-[#1e1e22] px-6 py-5 text-zinc-200">
+    <div className="no-scrollbar h-full overflow-y-auto bg-[#1e1e22] px-6 py-5 text-zinc-200">
       <h1 className="mb-5 text-lg font-semibold">Settings</h1>
 
       {/* Floating bar */}

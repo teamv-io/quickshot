@@ -14,3 +14,17 @@ body {
   user-select: none;
   overflow: hidden;
 }
+
+/* Hide the OS-native scrollbar visually but keep wheel + keyboard scrolling.
+   Used in compact utility windows (Settings) so they feel like native modals
+   rather than embedded web pages — especially on Windows where the chunky
+   scrollbar gutter is the dead giveaway. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
