@@ -3,6 +3,15 @@ import type { Settings, SettingsPatch } from '../shared/settings'
 
 export type { Settings, SettingsPatch, FloatPosition } from '../shared/settings'
 
+export interface SnapWindow {
+  id: string
+  title: string
+  /** Bounds in overlay-CSS coordinates (origin = top-left of the captured display). */
+  bounds: { x: number; y: number; width: number; height: number }
+  /** OS Z-order — larger is closer to the user. */
+  z: number
+}
+
 export interface OverlaySource {
   dataUrl: string
   bounds: { x: number; y: number; width: number; height: number }
@@ -10,6 +19,8 @@ export interface OverlaySource {
   purpose: 'screenshot' | 'record'
   /** True if the cursor was on this display at the moment the overlay opened. */
   isActive: boolean
+  /** Top-level OS windows visible on this display, for Snagit-style hover snap. */
+  windows: SnapWindow[]
 }
 
 export interface RegionFraction {

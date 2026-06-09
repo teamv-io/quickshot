@@ -18,6 +18,7 @@ import {
 import { is } from '@electron-toolkit/utils'
 import { captureActiveDisplay, captureAllDisplays } from './capture'
 import { Monitor as NativeMonitor } from 'node-screenshots'
+import { listWindowsForDisplay } from './windowSnap'
 import {
   initLibrary,
   listItems,
@@ -214,6 +215,11 @@ async function openOverlay(purpose: OverlayPurpose): Promise<void> {
     const cursorDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
 
     for (const slice of slices) {
+      // Enumerate visible OS windows BEFORE the overlays go on top, so our own
+      // overlay windows don't appear as snap candidates. listWindowsForDisplay
+      // also skips windows by our own pid as a safety net.
+      const snapWindows = listWindowsForDisplay(slice.bounds, process.pid)
+
       const win = new BrowserWindow({
         x: slice.bounds.x,
         y: slice.bounds.y,
@@ -256,7 +262,8 @@ async function openOverlay(purpose: OverlayPurpose): Promise<void> {
           bounds: slice.bounds,
           scaleFactor: slice.scaleFactor,
           purpose,
-          isActive: slice.displayId === cursorDisplayId
+          isActive: slice.displayId === cursorDisplayId,
+          windows: snapWindows
         })
       })
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Monitor, Circle, Mic, MicOff, Volume2, VolumeX, Video, VideoOff } from 'lucide-react'
-import type { OverlaySource } from '../../../preload'
+import type { OverlaySource, SnapWindow } from '../../../preload'
 import { detectPanels, type DetectedRect } from './detectPanels'
 
 interface Rect {
@@ -32,6 +32,11 @@ function pickHoverRect(rects: Rect[], px: number, py: number): Rect | null {
   return null
 }
 
+/** Smallest first so a front-to-back hit-test returns the innermost match. */
+function sortSmallestFirst(rects: Rect[]): Rect[] {
+  return rects.slice().sort((a, b) => a.w * a.h - b.w * b.h)
+}
+
 /**
  * Full-screen frozen screenshot dimmed with a selectable cut-out.
  * On release, crops the region at native resolution and hands it to the editor.
@@ -50,8 +55,11 @@ export default function Overlay(): JSX.Element {
   // overlay shows the action bar + center hint, so on multi-monitor setups the
   // chrome isn't duplicated on every screen.
   const [active, setActive] = useState(false)
-  // Panel rectangles detected purely from the screenshot pixels — no OS hints.
-  // Always sorted smallest-first so a hit-test returns the inner-most panel.
+  // Snap candidates the user can click-to-select. Two sources merged into one
+  // sorted list (smallest first, so hit-test returns the inner-most match):
+  //   • OS-reported top-level windows for this display (Snagit's primary cue).
+  //   • Rectangles detected from the screenshot pixels (catches sidebars,
+  //     toolbars and dialog panels the OS can't see inside an app window).
   const [panels, setPanels] = useState<Rect[]>([])
   const [mic, setMic] = useState(false)
   const [systemAudio, setSystemAudio] = useState(false)
@@ -67,25 +75,34 @@ export default function Overlay(): JSX.Element {
     []
   )
 
-  // Run the pixel-only panel detector once per overlay open. Convert the
-  // detector's output (native-resolution image coords) into overlay-CSS coords
-  // by dividing through the scaleFactor — that's the same space the cursor
-  // events live in.
+  // Build the snap-candidate list: seed with the OS windows for this display
+  // (already in CSS coords), then enrich asynchronously with whatever the
+  // pixel detector finds (sub-window panels). Both feed the same list, sorted
+  // smallest-first.
   useEffect(() => {
     if (!source) return
     let cancelled = false
+
+    const osRects = source.windows.map((w: SnapWindow) => ({
+      x: w.bounds.x,
+      y: w.bounds.y,
+      w: w.bounds.width,
+      h: w.bounds.height
+    }))
+    setPanels(sortSmallestFirst(osRects))
+
     detectPanels(source.dataUrl).then((found: DetectedRect[]) => {
       if (cancelled) return
       const s = source.scaleFactor
-      setPanels(
-        found.map((r) => ({
-          x: Math.round(r.x / s),
-          y: Math.round(r.y / s),
-          w: Math.round(r.width / s),
-          h: Math.round(r.height / s)
-        }))
-      )
+      const pixelRects: Rect[] = found.map((r) => ({
+        x: Math.round(r.x / s),
+        y: Math.round(r.y / s),
+        w: Math.round(r.width / s),
+        h: Math.round(r.height / s)
+      }))
+      setPanels(sortSmallestFirst([...osRects, ...pixelRects]))
     })
+
     return () => {
       cancelled = true
     }
