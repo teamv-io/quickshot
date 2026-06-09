@@ -82,7 +82,8 @@ function loadRoute(win: BrowserWindow, hash: string): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#/${hash}`)
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'), { hash })
+    // Pass "/<hash>" so the packaged URL fragment matches dev ("#/<hash>").
+    win.loadFile(join(__dirname, '../renderer/index.html'), { hash: `/${hash}` })
   }
 }
 

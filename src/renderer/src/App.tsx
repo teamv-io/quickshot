@@ -10,7 +10,8 @@ import Settings from './settings/Settings'
  *   #/floatbar → floating launcher   #/settings → preferences
  */
 export default function App(): JSX.Element {
-  const route = window.location.hash.replace(/^#\//, '')
+  // Tolerate both "#/overlay" (dev loadURL) and "#overlay" (packaged loadFile).
+  const route = window.location.hash.replace(/^#\/?/, '')
   if (route === 'overlay') return <Overlay />
   if (route === 'recorder') return <Recorder />
   if (route === 'floatbar') return <FloatBar />
