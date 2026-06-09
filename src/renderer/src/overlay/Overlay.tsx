@@ -37,6 +37,31 @@ function sortSmallestFirst(rects: Rect[]): Rect[] {
   return rects.slice().sort((a, b) => a.w * a.h - b.w * b.h)
 }
 
+function iou(a: Rect, b: Rect): number {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x))
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))
+  const inter = ix * iy
+  if (inter === 0) return 0
+  return inter / (a.w * a.h + b.w * b.h - inter)
+}
+
+/**
+ * Collapse near-duplicate rectangles. Walking smallest-first, we keep the
+ * current rect only if it's distinct enough (IoU < threshold) from every rect
+ * already kept — so a candidate that's basically the same panel as a smaller
+ * neighbour gets dropped. This is what keeps the suggestion list from
+ * exploding when both the OS window AND the pixel detector flag the same box.
+ */
+function dedupe(rects: Rect[], iouThreshold = 0.85): Rect[] {
+  const kept: Rect[] = []
+  for (const r of rects) {
+    if (r.w < 4 || r.h < 4) continue
+    if (kept.some((k) => iou(k, r) > iouThreshold)) continue
+    kept.push(r)
+  }
+  return kept
+}
+
 /**
  * Full-screen frozen screenshot dimmed with a selectable cut-out.
  * On release, crops the region at native resolution and hands it to the editor.
@@ -61,6 +86,10 @@ export default function Overlay(): JSX.Element {
   //   • Rectangles detected from the screenshot pixels (catches sidebars,
   //     toolbars and dialog panels the OS can't see inside an app window).
   const [panels, setPanels] = useState<Rect[]>([])
+  const [osCount, setOsCount] = useState(0)
+  const [pxCount, setPxCount] = useState(0)
+  // Press 'D' to overlay every candidate rectangle for tuning.
+  const [debug, setDebug] = useState(false)
   const [mic, setMic] = useState(false)
   const [systemAudio, setSystemAudio] = useState(false)
   const [webcam, setWebcam] = useState(false)
@@ -89,7 +118,10 @@ export default function Overlay(): JSX.Element {
       w: w.bounds.width,
       h: w.bounds.height
     }))
-    setPanels(sortSmallestFirst(osRects))
+    const initial = dedupe(sortSmallestFirst(osRects))
+    setOsCount(initial.length)
+    setPxCount(0)
+    setPanels(initial)
 
     detectPanels(source.dataUrl).then((found: DetectedRect[]) => {
       if (cancelled) return
@@ -100,7 +132,13 @@ export default function Overlay(): JSX.Element {
         w: Math.round(r.width / s),
         h: Math.round(r.height / s)
       }))
-      setPanels(sortSmallestFirst([...osRects, ...pixelRects]))
+      // Merge with OS rects, then dedupe so we don't end up with a near-dupe
+      // for every window (OS + pixel detector usually both flag the same box).
+      // Walking smallest-first ensures the tighter rectangle wins ties.
+      const merged = dedupe(sortSmallestFirst([...osRects, ...pixelRects]))
+      setOsCount(osRects.length)
+      setPxCount(pixelRects.length)
+      setPanels(merged)
     })
 
     return () => {
@@ -111,6 +149,7 @@ export default function Overlay(): JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') window.api.cancelCapture()
+      if (e.key === 'd' || e.key === 'D') setDebug((d) => !d)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -234,6 +273,29 @@ export default function Overlay(): JSX.Element {
         draggable={false}
       />
       <div className="pointer-events-none absolute inset-0 bg-black/45" />
+
+      {/* Debug mode (D to toggle): draw every snap candidate so we can see the
+          full set the detector + OS produce, including rejected duplicates. */}
+      {debug &&
+        panels.map((r, i) => (
+          <div
+            key={i}
+            className="pointer-events-none absolute border border-rose-400/60"
+            style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
+          >
+            <span className="absolute -top-4 left-0 bg-rose-500/80 px-1 text-[10px] leading-tight text-white">
+              {r.w}×{r.h}
+            </span>
+          </div>
+        ))}
+      {debug && active && (
+        <div className="pointer-events-none absolute right-4 top-4 rounded bg-black/80 px-3 py-2 font-mono text-xs text-white">
+          <div>panels: {panels.length}</div>
+          <div>os windows: {osCount}</div>
+          <div>pixel rects: {pxCount}</div>
+          <div className="mt-1 text-rose-300">debug — press D to hide</div>
+        </div>
+      )}
       {liveRect && (
         <div
           className={`pointer-events-none absolute border ${isSnap ? 'border-2 border-sky-300/90' : 'border-sky-400'}`}

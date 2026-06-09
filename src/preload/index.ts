@@ -10,6 +10,8 @@ export interface SnapWindow {
   bounds: { x: number; y: number; width: number; height: number }
   /** OS Z-order — larger is closer to the user. */
   z: number
+  /** Fraction of the window not covered by higher-Z windows (0–1). */
+  visibility: number
 }
 
 export interface OverlaySource {

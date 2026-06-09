@@ -28,9 +28,9 @@ export interface DetectedRect {
 }
 
 const WORK_MAX_DIM = 1024
-const MIN_SIDE_FRACTION = 0.04 // skip rectangles smaller than 4 % of the working canvas
-const MAX_LINES = 60 // cap on peaks per axis to keep the O(P²×Q²) loop bounded
-const EDGE_THRESHOLD = 9 // min mean gradient (0–255) along each side to accept
+const MIN_SIDE_FRACTION = 0.06 // skip rectangles smaller than 6 % of the working canvas
+const MAX_LINES = 40 // cap on peaks per axis to keep the O(P²×Q²) loop bounded
+const EDGE_THRESHOLD = 14 // min mean gradient (0–255) along each side to accept
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
