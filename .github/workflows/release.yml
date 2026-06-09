@@ -16,8 +16,6 @@ jobs:
         include:
           - os: macos-latest # Apple Silicon (arm64)
             target: '--mac'
-          - os: macos-13 # Intel (x64)
-            target: '--mac'
           - os: windows-latest
             target: '--win'
           - os: ubuntu-latest
