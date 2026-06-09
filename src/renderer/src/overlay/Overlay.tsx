@@ -10,6 +10,14 @@ interface Rect {
   h: number
 }
 
+/** A snap candidate carries its source so the debug HUD + snap hint can label
+ *  it with the owning program (or "pixel" for the panel detector's rectangles). */
+interface SnapCandidate extends Rect {
+  source: 'os' | 'pixel'
+  app?: string
+  title?: string
+}
+
 function normalize(a: { x: number; y: number }, b: { x: number; y: number }): Rect {
   return {
     x: Math.min(a.x, b.x),
@@ -22,10 +30,9 @@ function normalize(a: { x: number; y: number }, b: { x: number; y: number }): Re
 /** Click vs drag threshold: pointer travel below this is treated as a click. */
 const DRAG_THRESHOLD = 4
 
-/** Find the smallest detected panel rectangle containing the cursor. */
-function pickHoverRect(rects: Rect[], px: number, py: number): Rect | null {
-  // Rects are already sorted smallest-first by the detector, so the first hit
-  // is the inner-most panel under the cursor.
+/** Find the smallest snap candidate containing the cursor. */
+function pickHoverRect(rects: SnapCandidate[], px: number, py: number): SnapCandidate | null {
+  // Rects are already sorted smallest-first, so the first hit is the inner-most.
   for (const r of rects) {
     if (px >= r.x && py >= r.y && px <= r.x + r.w && py <= r.y + r.h) return r
   }
@@ -33,7 +40,7 @@ function pickHoverRect(rects: Rect[], px: number, py: number): Rect | null {
 }
 
 /** Smallest first so a front-to-back hit-test returns the innermost match. */
-function sortSmallestFirst(rects: Rect[]): Rect[] {
+function sortSmallestFirst(rects: SnapCandidate[]): SnapCandidate[] {
   return rects.slice().sort((a, b) => a.w * a.h - b.w * b.h)
 }
 
@@ -51,15 +58,31 @@ function iou(a: Rect, b: Rect): number {
  * already kept — so a candidate that's basically the same panel as a smaller
  * neighbour gets dropped. This is what keeps the suggestion list from
  * exploding when both the OS window AND the pixel detector flag the same box.
+ * Ties favour the OS-sourced candidate so we keep the labeled one.
  */
-function dedupe(rects: Rect[], iouThreshold = 0.85): Rect[] {
-  const kept: Rect[] = []
+function dedupe(rects: SnapCandidate[], iouThreshold = 0.85): SnapCandidate[] {
+  const kept: SnapCandidate[] = []
   for (const r of rects) {
     if (r.w < 4 || r.h < 4) continue
-    if (kept.some((k) => iou(k, r) > iouThreshold)) continue
-    kept.push(r)
+    const dupeIdx = kept.findIndex((k) => iou(k, r) > iouThreshold)
+    if (dupeIdx === -1) {
+      kept.push(r)
+      continue
+    }
+    // Prefer the OS-sourced rect over the pixel-detected one so we keep labels.
+    if (kept[dupeIdx].source !== 'os' && r.source === 'os') kept[dupeIdx] = r
   }
   return kept
+}
+
+/** Short human-readable label for a candidate — used in the debug HUD and the
+ *  live snap hint. Pixel-detected rects have no OS metadata so just say so. */
+function labelFor(c: SnapCandidate): string {
+  if (c.source !== 'os') return 'panel'
+  const app = c.app || ''
+  const title = c.title || ''
+  if (app && title) return `${app} — ${title}`
+  return app || title || 'window'
 }
 
 /**
@@ -85,7 +108,8 @@ export default function Overlay(): JSX.Element {
   //   • OS-reported top-level windows for this display (Snagit's primary cue).
   //   • Rectangles detected from the screenshot pixels (catches sidebars,
   //     toolbars and dialog panels the OS can't see inside an app window).
-  const [panels, setPanels] = useState<Rect[]>([])
+  const [panels, setPanels] = useState<SnapCandidate[]>([])
+  const [hoverCandidate, setHoverCandidate] = useState<SnapCandidate | null>(null)
   const [osCount, setOsCount] = useState(0)
   const [pxCount, setPxCount] = useState(0)
   // Press 'D' to overlay every candidate rectangle for tuning.
@@ -112,11 +136,14 @@ export default function Overlay(): JSX.Element {
     if (!source) return
     let cancelled = false
 
-    const osRects = source.windows.map((w: SnapWindow) => ({
+    const osRects: SnapCandidate[] = source.windows.map((w: SnapWindow) => ({
       x: w.bounds.x,
       y: w.bounds.y,
       w: w.bounds.width,
-      h: w.bounds.height
+      h: w.bounds.height,
+      source: 'os',
+      app: w.app,
+      title: w.title
     }))
     const initial = dedupe(sortSmallestFirst(osRects))
     setOsCount(initial.length)
@@ -126,11 +153,12 @@ export default function Overlay(): JSX.Element {
     detectPanels(source.dataUrl).then((found: DetectedRect[]) => {
       if (cancelled) return
       const s = source.scaleFactor
-      const pixelRects: Rect[] = found.map((r) => ({
+      const pixelRects: SnapCandidate[] = found.map((r) => ({
         x: Math.round(r.x / s),
         y: Math.round(r.y / s),
         w: Math.round(r.width / s),
-        h: Math.round(r.height / s)
+        h: Math.round(r.height / s),
+        source: 'pixel'
       }))
       // Merge with OS rects, then dedupe so we don't end up with a near-dupe
       // for every window (OS + pixel detector usually both flag the same box).
@@ -203,11 +231,14 @@ export default function Overlay(): JSX.Element {
       if (dragging || Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
         setRect(normalize(origin, { x: e.clientX, y: e.clientY }))
         setHoverRect(null)
+        setHoverCandidate(null)
       }
       return
     }
     // Idle hover — show the panel snap candidate.
-    setHoverRect(pickHoverRect(panels, e.clientX, e.clientY))
+    const c = pickHoverRect(panels, e.clientX, e.clientY)
+    setHoverCandidate(c)
+    setHoverRect(c ? { x: c.x, y: c.y, w: c.w, h: c.h } : null)
   }
 
   function onMouseUp(e: React.MouseEvent): void {
@@ -239,6 +270,7 @@ export default function Overlay(): JSX.Element {
 
   function onMouseLeave(): void {
     setHoverRect(null)
+    setHoverCandidate(null)
     // Cursor moved off this display — hand the action-bar baton to the overlay
     // that now has the cursor. (Don't clear the in-progress drag rect: if the
     // user dragged past the edge between displays the drawn region should
@@ -277,17 +309,26 @@ export default function Overlay(): JSX.Element {
       {/* Debug mode (D to toggle): draw every snap candidate so we can see the
           full set the detector + OS produce, including rejected duplicates. */}
       {debug &&
-        panels.map((r, i) => (
-          <div
-            key={i}
-            className="pointer-events-none absolute border border-rose-400/60"
-            style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
-          >
-            <span className="absolute -top-4 left-0 bg-rose-500/80 px-1 text-[10px] leading-tight text-white">
-              {r.w}×{r.h}
-            </span>
-          </div>
-        ))}
+        panels.map((r, i) => {
+          const isOs = r.source === 'os'
+          return (
+            <div
+              key={i}
+              className={`pointer-events-none absolute border ${
+                isOs ? 'border-emerald-400/80' : 'border-rose-400/60'
+              }`}
+              style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
+            >
+              <span
+                className={`absolute -top-4 left-0 max-w-[40vw] truncate px-1 text-[10px] leading-tight text-white ${
+                  isOs ? 'bg-emerald-500/85' : 'bg-rose-500/80'
+                }`}
+              >
+                {r.w}×{r.h} · {labelFor(r)}
+              </span>
+            </div>
+          )
+        })}
       {debug && active && (
         <div className="pointer-events-none absolute right-4 top-4 rounded bg-black/80 px-3 py-2 font-mono text-xs text-white">
           <div>panels: {panels.length}</div>
@@ -311,12 +352,16 @@ export default function Overlay(): JSX.Element {
           }}
         >
           <span
-            className={`absolute -top-6 left-0 rounded px-1.5 py-0.5 text-xs text-white ${
+            className={`absolute -top-6 left-0 max-w-[80vw] truncate rounded px-1.5 py-0.5 text-xs text-white ${
               isSnap ? 'bg-sky-400/95' : 'bg-sky-500'
             }`}
           >
             {Math.round(liveRect.w)} × {Math.round(liveRect.h)}
-            {isSnap && <span className="ml-1 opacity-80">· click to snap</span>}
+            {isSnap && (
+              <span className="ml-1 opacity-80">
+                · click to snap{hoverCandidate ? ` · ${labelFor(hoverCandidate)}` : ''}
+              </span>
+            )}
           </span>
         </div>
       )}

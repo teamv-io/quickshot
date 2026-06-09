@@ -23,6 +23,8 @@ export interface SnapWindow {
   /** OS window handle, stringified for IPC safety. */
   id: string
   title: string
+  /** Owning program / executable name reported by the OS (e.g., "Slack"). */
+  app: string
   /** Bounds in overlay-CSS coordinates (origin = top-left of the display). */
   bounds: { x: number; y: number; width: number; height: number }
   /** OS Z-order — larger == closer to the user. */
@@ -169,6 +171,7 @@ export function listWindowsForDisplay(display: DisplayBounds, ownPid: number): S
     candidates.push({
       id: String(w.id),
       title: w.title,
+      app: w.app,
       bounds: v.clipped,
       z: w.z,
       visibility: fraction

@@ -6,6 +6,8 @@ export type { Settings, SettingsPatch, FloatPosition } from '../shared/settings'
 export interface SnapWindow {
   id: string
   title: string
+  /** Owning program / executable name reported by the OS (e.g., "Slack"). */
+  app: string
   /** Bounds in overlay-CSS coordinates (origin = top-left of the captured display). */
   bounds: { x: number; y: number; width: number; height: number }
   /** OS Z-order — larger is closer to the user. */
