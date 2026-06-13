@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Monitor, Circle, Mic, MicOff, Volume2, VolumeX, Video, VideoOff } from 'lucide-react'
 import type { OverlaySource, SnapWindow } from '../../../preload'
-import { detectPanels, type DetectedRect } from './detectPanels'
 
 interface Rect {
   x: number
@@ -10,10 +9,12 @@ interface Rect {
   h: number
 }
 
-/** A snap candidate carries its source so the debug HUD + snap hint can label
- *  it with the owning program (or "pixel" for the panel detector's rectangles). */
+/** OS-reported snap candidate. We used to merge in pixel-detected panels too,
+ *  but those produced phantom rectangles for noise/text seams, so snap is now
+ *  OS-only — every candidate has an `app`/`title` we can show in the hint. */
 interface SnapCandidate extends Rect {
-  source: 'os' | 'pixel'
+  /** OS Z-order — larger == closer to the user. Drives the hover hit-test. */
+  z: number
   app?: string
   title?: string
 }
@@ -30,18 +31,21 @@ function normalize(a: { x: number; y: number }, b: { x: number; y: number }): Re
 /** Click vs drag threshold: pointer travel below this is treated as a click. */
 const DRAG_THRESHOLD = 4
 
-/** Find the smallest snap candidate containing the cursor. */
+/** Find the snap candidate the user actually SEES under the cursor: walk in
+ *  descending Z and return the first rect containing the point. Picking by
+ *  smallest size instead (the old behaviour) highlighted windows that were
+ *  buried behind the one on screen — a box for something you can't see. */
 function pickHoverRect(rects: SnapCandidate[], px: number, py: number): SnapCandidate | null {
-  // Rects are already sorted smallest-first, so the first hit is the inner-most.
+  // Rects are already sorted topmost-first, so the first hit wins.
   for (const r of rects) {
     if (px >= r.x && py >= r.y && px <= r.x + r.w && py <= r.y + r.h) return r
   }
   return null
 }
 
-/** Smallest first so a front-to-back hit-test returns the innermost match. */
-function sortSmallestFirst(rects: SnapCandidate[]): SnapCandidate[] {
-  return rects.slice().sort((a, b) => a.w * a.h - b.w * b.h)
+/** Topmost first, matching what's visually stacked under the cursor. */
+function sortTopmostFirst(rects: SnapCandidate[]): SnapCandidate[] {
+  return rects.slice().sort((a, b) => b.z - a.z)
 }
 
 function iou(a: Rect, b: Rect): number {
@@ -53,32 +57,24 @@ function iou(a: Rect, b: Rect): number {
 }
 
 /**
- * Collapse near-duplicate rectangles. Walking smallest-first, we keep the
+ * Collapse near-duplicate rectangles. Walking topmost-first, we keep the
  * current rect only if it's distinct enough (IoU < threshold) from every rect
- * already kept — so a candidate that's basically the same panel as a smaller
- * neighbour gets dropped. This is what keeps the suggestion list from
- * exploding when both the OS window AND the pixel detector flag the same box.
- * Ties favour the OS-sourced candidate so we keep the labeled one.
+ * already kept — so a window that's basically the same box as one stacked
+ * above it gets dropped, and the visible (topmost) one survives.
  */
 function dedupe(rects: SnapCandidate[], iouThreshold = 0.85): SnapCandidate[] {
   const kept: SnapCandidate[] = []
   for (const r of rects) {
     if (r.w < 4 || r.h < 4) continue
-    const dupeIdx = kept.findIndex((k) => iou(k, r) > iouThreshold)
-    if (dupeIdx === -1) {
-      kept.push(r)
-      continue
-    }
-    // Prefer the OS-sourced rect over the pixel-detected one so we keep labels.
-    if (kept[dupeIdx].source !== 'os' && r.source === 'os') kept[dupeIdx] = r
+    if (kept.some((k) => iou(k, r) > iouThreshold)) continue
+    kept.push(r)
   }
   return kept
 }
 
 /** Short human-readable label for a candidate — used in the debug HUD and the
- *  live snap hint. Pixel-detected rects have no OS metadata so just say so. */
+ *  live snap hint. */
 function labelFor(c: SnapCandidate): string {
-  if (c.source !== 'os') return 'panel'
   const app = c.app || ''
   const title = c.title || ''
   if (app && title) return `${app} — ${title}`
@@ -103,15 +99,14 @@ export default function Overlay(): JSX.Element {
   // overlay shows the action bar + center hint, so on multi-monitor setups the
   // chrome isn't duplicated on every screen.
   const [active, setActive] = useState(false)
-  // Snap candidates the user can click-to-select. Two sources merged into one
-  // sorted list (smallest first, so hit-test returns the inner-most match):
-  //   • OS-reported top-level windows for this display (Snagit's primary cue).
-  //   • Rectangles detected from the screenshot pixels (catches sidebars,
-  //     toolbars and dialog panels the OS can't see inside an app window).
+  // Snap candidates the user can click-to-select: OS-reported top-level windows
+  // for this display, sorted topmost-first so hit-tests match what's on screen.
   const [panels, setPanels] = useState<SnapCandidate[]>([])
   const [hoverCandidate, setHoverCandidate] = useState<SnapCandidate | null>(null)
-  const [osCount, setOsCount] = useState(0)
-  const [pxCount, setPxCount] = useState(0)
+  // Snagit-style crosshair: dashed horizontal + vertical lines centered on the
+  // cursor while the overlay is active. Null until the cursor enters this
+  // display, so we don't paint a stale crosshair on idle/secondary screens.
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
   // Press 'D' to overlay every candidate rectangle for tuning.
   const [debug, setDebug] = useState(false)
   const [mic, setMic] = useState(false)
@@ -128,50 +123,32 @@ export default function Overlay(): JSX.Element {
     []
   )
 
-  // Build the snap-candidate list: seed with the OS windows for this display
-  // (already in CSS coords), then enrich asynchronously with whatever the
-  // pixel detector finds (sub-window panels). Both feed the same list, sorted
-  // smallest-first.
+  // Where the display's top-left lands in THIS window's client space. Ideally
+  // (0,0), but Windows can nudge the overlay window by a few px (DPI rounding,
+  // bounds adjustments), which used to shift the crop versus the highlight.
+  // Anchoring image, candidates and crop math to this measured offset keeps
+  // them all consistent regardless of where the window actually ended up.
+  const displayOffset = (src: OverlaySource): { x: number; y: number } => ({
+    x: src.bounds.x - window.screenX,
+    y: src.bounds.y - window.screenY
+  })
+
+  // Build the snap-candidate list from OS-reported windows for this display
+  // (display-relative DIP coords → window client coords via the measured
+  // offset). The OS layer is authoritative for whole-window positions.
   useEffect(() => {
     if (!source) return
-    let cancelled = false
-
+    const off = displayOffset(source)
     const osRects: SnapCandidate[] = source.windows.map((w: SnapWindow) => ({
-      x: w.bounds.x,
-      y: w.bounds.y,
+      x: w.bounds.x + off.x,
+      y: w.bounds.y + off.y,
       w: w.bounds.width,
       h: w.bounds.height,
-      source: 'os',
+      z: w.z,
       app: w.app,
       title: w.title
     }))
-    const initial = dedupe(sortSmallestFirst(osRects))
-    setOsCount(initial.length)
-    setPxCount(0)
-    setPanels(initial)
-
-    detectPanels(source.dataUrl).then((found: DetectedRect[]) => {
-      if (cancelled) return
-      const s = source.scaleFactor
-      const pixelRects: SnapCandidate[] = found.map((r) => ({
-        x: Math.round(r.x / s),
-        y: Math.round(r.y / s),
-        w: Math.round(r.width / s),
-        h: Math.round(r.height / s),
-        source: 'pixel'
-      }))
-      // Merge with OS rects, then dedupe so we don't end up with a near-dupe
-      // for every window (OS + pixel detector usually both flag the same box).
-      // Walking smallest-first ensures the tighter rectangle wins ties.
-      const merged = dedupe(sortSmallestFirst([...osRects, ...pixelRects]))
-      setOsCount(osRects.length)
-      setPxCount(pixelRects.length)
-      setPanels(merged)
-    })
-
-    return () => {
-      cancelled = true
-    }
+    setPanels(dedupe(sortTopmostFirst(osRects)))
   }, [source])
 
   useEffect(() => {
@@ -185,30 +162,38 @@ export default function Overlay(): JSX.Element {
 
   function finish(sel: Rect): void {
     if (!source) return
+    // Window client coords → display-relative coords.
+    const off = displayOffset(source)
+    const dx = sel.x - off.x
+    const dy = sel.y - off.y
 
     // Recording: hand back the region as fractions of the display (resolution-independent).
     if (source.purpose === 'record') {
       window.api.completeRegion(
         {
-          fx: sel.x / window.innerWidth,
-          fy: sel.y / window.innerHeight,
-          fw: sel.w / window.innerWidth,
-          fh: sel.h / window.innerHeight
+          fx: dx / source.bounds.width,
+          fy: dy / source.bounds.height,
+          fw: sel.w / source.bounds.width,
+          fh: sel.h / source.bounds.height
         },
         { mic, systemAudio, webcam }
       )
       return
     }
 
-    // Screenshot: crop the frozen image at native resolution.
+    // Screenshot: crop the frozen image at native resolution. Derive the
+    // CSS→image scale from the image's actual pixel size rather than trusting
+    // scaleFactor — display DIP bounds can be off by a rounding pixel (a 1440-
+    // DIP display reporting 1441), and the natural-size ratio absorbs that.
     const img = imgRef.current
     if (!img) return
-    const s = source.scaleFactor
+    const sx = img.naturalWidth / source.bounds.width
+    const sy = img.naturalHeight / source.bounds.height
     const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(sel.w * s))
-    canvas.height = Math.max(1, Math.round(sel.h * s))
+    canvas.width = Math.max(1, Math.round(sel.w * sx))
+    canvas.height = Math.max(1, Math.round(sel.h * sy))
     const ctx = canvas.getContext('2d')!
-    ctx.drawImage(img, sel.x * s, sel.y * s, sel.w * s, sel.h * s, 0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, dx * sx, dy * sy, sel.w * sx, sel.h * sy, 0, 0, canvas.width, canvas.height)
     window.api.completeScreenshot(canvas.toDataURL('image/png'))
   }
 
@@ -219,6 +204,7 @@ export default function Overlay(): JSX.Element {
   }
 
   function onMouseMove(e: React.MouseEvent): void {
+    setCursor({ x: e.clientX, y: e.clientY })
     if (origin) {
       const dx = e.clientX - origin.x
       const dy = e.clientY - origin.y
@@ -271,6 +257,7 @@ export default function Overlay(): JSX.Element {
   function onMouseLeave(): void {
     setHoverRect(null)
     setHoverCandidate(null)
+    setCursor(null)
     // Cursor moved off this display — hand the action-bar baton to the overlay
     // that now has the cursor. (Don't clear the in-progress drag rect: if the
     // user dragged past the edge between displays the drawn region should
@@ -288,6 +275,24 @@ export default function Overlay(): JSX.Element {
 
   const liveRect = rect ?? (origin ? null : hoverRect)
   const isSnap = !rect && !!hoverRect
+  const off = displayOffset(source)
+  // Marching dashed edge for the selection box — same gradient trick as the
+  // crosshair; direction flips on bottom/left so the dashes circulate.
+  const edgeColor = 'rgba(56,189,248,0.95)'
+  const edgeH = (animDir: string): React.CSSProperties => ({
+    height: 2,
+    backgroundImage: `linear-gradient(to right, ${edgeColor} 60%, transparent 0)`,
+    backgroundSize: '32px 2px',
+    backgroundRepeat: 'repeat-x',
+    animation: `crosshair-march-x 0.4s linear infinite ${animDir}`
+  })
+  const edgeV = (animDir: string): React.CSSProperties => ({
+    width: 2,
+    backgroundImage: `linear-gradient(to bottom, ${edgeColor} 60%, transparent 0)`,
+    backgroundSize: '2px 32px',
+    backgroundRepeat: 'repeat-y',
+    animation: `crosshair-march-y 0.4s linear infinite ${animDir}`
+  })
 
   return (
     <div
@@ -298,59 +303,76 @@ export default function Overlay(): JSX.Element {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {/* Frozen screenshot anchored to the DISPLAY's position in this window's
+          client space (not stretched to the window), so a window placed a few
+          px off the display origin can't shift the image versus reality. */}
       <img
         ref={imgRef}
         src={source.dataUrl}
-        className="pointer-events-none absolute inset-0 h-full w-full"
+        className="pointer-events-none absolute max-w-none"
+        style={{
+          left: off.x,
+          top: off.y,
+          width: source.bounds.width,
+          height: source.bounds.height
+        }}
         draggable={false}
       />
       <div className="pointer-events-none absolute inset-0 bg-black/45" />
 
       {/* Debug mode (D to toggle): draw every snap candidate so we can see the
-          full set the detector + OS produce, including rejected duplicates. */}
+          full set the OS enumeration produces, including rejected duplicates. */}
       {debug &&
-        panels.map((r, i) => {
-          const isOs = r.source === 'os'
-          return (
-            <div
-              key={i}
-              className={`pointer-events-none absolute border ${
-                isOs ? 'border-emerald-400/80' : 'border-rose-400/60'
-              }`}
-              style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
-            >
-              <span
-                className={`absolute -top-4 left-0 max-w-[40vw] truncate px-1 text-[10px] leading-tight text-white ${
-                  isOs ? 'bg-emerald-500/85' : 'bg-rose-500/80'
-                }`}
-              >
-                {r.w}×{r.h} · {labelFor(r)}
-              </span>
-            </div>
-          )
-        })}
+        panels.map((r, i) => (
+          <div
+            key={i}
+            className="pointer-events-none absolute border border-emerald-400/80"
+            style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
+          >
+            <span className="absolute -top-4 left-0 max-w-[40vw] truncate bg-emerald-500/85 px-1 text-[10px] leading-tight text-white">
+              {r.w}×{r.h} · {labelFor(r)}
+            </span>
+          </div>
+        ))}
       {debug && active && (
         <div className="pointer-events-none absolute right-4 top-4 rounded bg-black/80 px-3 py-2 font-mono text-xs text-white">
-          <div>panels: {panels.length}</div>
-          <div>os windows: {osCount}</div>
-          <div>pixel rects: {pxCount}</div>
+          <div>os windows: {panels.length}</div>
+          <div>
+            display: {source.bounds.x},{source.bounds.y} {source.bounds.width}×{source.bounds.height}
+          </div>
+          <div>
+            window: {window.screenX},{window.screenY} {window.innerWidth}×{window.innerHeight}
+          </div>
+          <div>
+            offset: {off.x},{off.y} · img: {imgRef.current?.naturalWidth}×
+            {imgRef.current?.naturalHeight} · sf: {source.scaleFactor}
+          </div>
           <div className="mt-1 text-rose-300">debug — press D to hide</div>
         </div>
       )}
       {liveRect && (
         <div
-          className={`pointer-events-none absolute border ${isSnap ? 'border-2 border-sky-300/90' : 'border-sky-400'}`}
+          className="pointer-events-none absolute"
           style={{
             left: liveRect.x,
             top: liveRect.y,
             width: liveRect.w,
             height: liveRect.h,
             backgroundImage: `url(${source.dataUrl})`,
-            backgroundPosition: `-${liveRect.x}px -${liveRect.y}px`,
-            backgroundSize: `${window.innerWidth}px ${window.innerHeight}px`,
+            backgroundPosition: `${off.x - liveRect.x}px ${off.y - liveRect.y}px`,
+            backgroundSize: `${source.bounds.width}px ${source.bounds.height}px`,
             boxShadow: isSnap ? '0 0 0 1px rgba(56,189,248,0.35), 0 8px 28px rgba(0,0,0,0.45)' : undefined
           }}
         >
+          {/* Marching dashed border (the crosshair itself stays static).
+              Top strip uses top-px (not top-0): when liveRect.y is fractional,
+              the parent's top rounds to a whole pixel but the inner strip
+              draws at the float position and the 2-px band leaks ~0.5 px above
+              the box. The 1-px inset hides that on every pixel grid. */}
+          <div className="absolute left-0 right-0 top-px" style={edgeH('normal')} />
+          <div className="absolute bottom-0 left-0 right-0" style={edgeH('reverse')} />
+          <div className="absolute bottom-0 left-0 top-0" style={edgeV('reverse')} />
+          <div className="absolute bottom-0 right-0 top-0" style={edgeV('normal')} />
           <span
             className={`absolute -top-6 left-0 max-w-[80vw] truncate rounded px-1.5 py-0.5 text-xs text-white ${
               isSnap ? 'bg-sky-400/95' : 'bg-sky-500'
@@ -435,6 +457,34 @@ export default function Overlay(): JSX.Element {
           </button>
         </div>
       </div>
+      )}
+
+      {/* Snagit-style crosshair — static dashed red lines through the cursor
+          (the marching animation lives on the selection box border instead).
+          Rendered last with a very high z-index so it always paints on top. */}
+      {active && cursor && (
+        <>
+          <div
+            className="pointer-events-none absolute left-0 right-0 z-[9999] h-[2px]"
+            style={{
+              top: cursor.y - 1,
+              backgroundImage:
+                'linear-gradient(to right, rgba(239,68,68,0.95) 60%, transparent 0)',
+              backgroundSize: '32px 2px',
+              backgroundRepeat: 'repeat-x'
+            }}
+          />
+          <div
+            className="pointer-events-none absolute bottom-0 top-0 z-[9999] w-[2px]"
+            style={{
+              left: cursor.x - 1,
+              backgroundImage:
+                'linear-gradient(to bottom, rgba(239,68,68,0.95) 60%, transparent 0)',
+              backgroundSize: '2px 32px',
+              backgroundRepeat: 'repeat-y'
+            }}
+          />
+        </>
       )}
     </div>
   )

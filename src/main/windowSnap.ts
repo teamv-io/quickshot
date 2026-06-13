@@ -17,6 +17,7 @@
 // Pixel-based panel detection in detectPanels.ts complements this for the
 // sub-window panels (sidebars, dialogs) the OS doesn't know about.
 
+import { screen } from 'electron'
 import { Window as OsWindow } from 'node-screenshots'
 
 export interface SnapWindow {
@@ -82,16 +83,37 @@ function snapshotWindows(): RawWindow[] {
   for (const w of raw) {
     try {
       if (w.isMinimized()) continue
-      const width = w.width()
-      const height = w.height()
-      if (width < MIN_SIDE_PX || height < MIN_SIDE_PX) continue
+      // node-screenshots reports HWND rects via GetWindowRect. The Electron
+      // main process is per-monitor-DPI-aware, so those come back in PHYSICAL
+      // screen pixels — but the whole snap pipeline (display bounds from
+      // Electron, overlay CSS coords) speaks DIP. Convert here, at the source.
+      // (Verified empirically: under DPI-aware Electron a 1138×609-DIP window
+      // enumerates as 2843×1521 physical on a 250 % display.)
+      let bounds = { x: w.x(), y: w.y(), width: w.width(), height: w.height() }
+      if (process.platform === 'win32') {
+        const dip = screen.screenToDipRect(null, bounds)
+        bounds = {
+          x: Math.round(dip.x),
+          y: Math.round(dip.y),
+          width: Math.round(dip.width),
+          height: Math.round(dip.height)
+        }
+        // GetWindowRect on DWM-composited windows reports a rect whose top
+        // edge sits 1-2 DIP above the first row of actual window pixels (the
+        // resize-border seam). Shave it off so snap crops don't pick up a
+        // thin band of whatever's behind the window.
+        const TOP_TRIM = 2
+        bounds.y += TOP_TRIM
+        bounds.height = Math.max(0, bounds.height - TOP_TRIM)
+      }
+      if (bounds.width < MIN_SIDE_PX || bounds.height < MIN_SIDE_PX) continue
       out.push({
         id: w.id(),
         title: w.title() || '',
         app: w.appName() || '',
         pid: w.pid(),
         z: w.z(),
-        bounds: { x: w.x(), y: w.y(), width, height }
+        bounds
       })
     } catch {
       /* skip windows we can't read */

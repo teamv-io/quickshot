@@ -22,20 +22,56 @@ interface DisplayLike {
 }
 
 /**
- * Match a Monitor (from `node-screenshots`) to an Electron display by comparing
- * top-left position in logical coordinates. `node-screenshots` returns bounds
- * in physical pixels, so we divide by its `scaleFactor` to compare against
- * Electron's logical bounds.
+ * Match a Monitor (from `node-screenshots`) to an Electron display.
  *
- * Position is unique per monitor in screen-space (no two monitors share a
- * top-left), so this is a stable mapping that doesn't rely on driver-issued
- * IDs (which differ between the two libraries).
+ * `node-screenshots` reports bounds in physical pixels of the Windows virtual
+ * screen. Electron reports bounds in logical DIPs. On mixed-DPI setups (e.g.
+ * laptop at 150 % + external at 100 %), naively dividing the Monitor's x/y by
+ * its OWN scale factor doesn't reproduce Electron's logical layout, because
+ * sibling displays scale at different rates — so an exact top-left match
+ * misses the external display and we silently drop its overlay.
+ *
+ * Robust strategy: match by LOGICAL SIZE first (every monitor scales its own
+ * dimensions consistently regardless of siblings), and fall back to whichever
+ * Electron display's center is closest to the monitor's logical center when
+ * sizes collide.
  */
-function findElectronDisplay(m: Monitor, displays: DisplayLike[]): DisplayLike | undefined {
+function findElectronDisplay(
+  m: Monitor,
+  displays: DisplayLike[],
+  taken: Set<number>
+): DisplayLike | undefined {
   const ms = m.scaleFactor() || 1
-  const mx = Math.round(m.x() / ms)
-  const my = Math.round(m.y() / ms)
-  return displays.find((d) => d.bounds.x === mx && d.bounds.y === my)
+  const lw = Math.round(m.width() / ms)
+  const lh = Math.round(m.height() / ms)
+  const lx = Math.round(m.x() / ms)
+  const ly = Math.round(m.y() / ms)
+
+  const available = displays.filter((d) => !taken.has(d.id))
+
+  // Prefer exact size match (with 1-px tolerance for rounding).
+  const sized = available.filter(
+    (d) => Math.abs(d.bounds.width - lw) <= 1 && Math.abs(d.bounds.height - lh) <= 1
+  )
+  if (sized.length === 1) return sized[0]
+
+  // Multiple same-size displays → pick the closest by center distance.
+  const pool = sized.length > 0 ? sized : available
+  if (pool.length === 0) return undefined
+  const mcx = lx + lw / 2
+  const mcy = ly + lh / 2
+  let best = pool[0]
+  let bestDist = Infinity
+  for (const d of pool) {
+    const dcx = d.bounds.x + d.bounds.width / 2
+    const dcy = d.bounds.y + d.bounds.height / 2
+    const dist = Math.hypot(mcx - dcx, mcy - dcy)
+    if (dist < bestDist) {
+      best = d
+      bestDist = dist
+    }
+  }
+  return best
 }
 
 /**
@@ -52,8 +88,10 @@ export async function captureAllDisplays(): Promise<CaptureSlice[]> {
   const monitors = Monitor.all()
 
   const slices: CaptureSlice[] = []
+  const taken = new Set<number>()
   for (const m of monitors) {
-    const d = findElectronDisplay(m, displays)
+    const d = findElectronDisplay(m, displays, taken)
+    if (d) taken.add(d.id)
     if (!d) {
       console.warn(
         `[capture] native monitor at (${m.x()}, ${m.y()}) doesn't match any Electron display — skipped.`

@@ -300,9 +300,17 @@ export default function ImageView({ item }: { item: LibraryItem }): JSX.Element 
         </div>
       )}
 
-      <div className="relative flex flex-1 items-center justify-center overflow-auto p-6">
-        <canvas ref={canvasRef} className="rounded-lg shadow-2xl shadow-black/50" />
-        {!ready && <div className="absolute text-sm text-zinc-500">Loading…</div>}
+      {/* The canvas wrapper (.canvas-container) centers via auto margins, NOT
+          items-center: flex centering + overflow-auto clips the TOP of a
+          too-tall canvas (scroll can't reach negative offsets), which showed
+          up as captures "missing" their window title bar in the editor. */}
+      <div className="relative flex flex-1 overflow-auto p-6">
+        <canvas ref={canvasRef} className="shadow-2xl shadow-black/50" />
+        {!ready && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
+            Loading…
+          </div>
+        )}
         {toast && (
           <div className="absolute bottom-6 rounded-full bg-black/80 px-4 py-2 text-sm text-white shadow-lg">
             {toast}

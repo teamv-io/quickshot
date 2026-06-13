@@ -28,3 +28,32 @@ body {
   height: 0;
   display: none;
 }
+
+/* Center the Fabric canvas (its .canvas-container wrapper) inside the editor's
+   scroll area. Auto margins center when the canvas is smaller than the
+   viewport but collapse to 0 when it's larger — unlike flex items-center,
+   which pushes overflow above the scrollable origin and clips the image top. */
+.canvas-container {
+  margin: auto;
+}
+
+/* Marching-ants animation for the capture overlay's selection-box border. The
+   dashed lines are CSS background-gradients with a 32px tile, so shifting
+   background-position by one tile and looping makes the dashes scroll
+   continuously. (The cursor crosshair uses the same gradients, unanimated.) */
+@keyframes crosshair-march-x {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 32px 0;
+  }
+}
+@keyframes crosshair-march-y {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 32px;
+  }
+}
